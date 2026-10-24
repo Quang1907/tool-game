@@ -53,3 +53,31 @@ class TestUIComponents:
         best = window.tab_solver.current_arrangement
         assert best.back_eval >= best.middle_eval
         assert not best.is_foul
+
+    def test_vision_widget_image_loading_and_zoom(self, qapp):
+        import numpy as np
+        window = MainWindow()
+        vision_tab = window.tab_vision
+
+        # Load dummy test image (300x500 BGR)
+        dummy_img = np.zeros((300, 500, 3), dtype=np.uint8)
+        dummy_img[50:250, 50:450] = (255, 255, 255)
+
+        vision_tab.set_image(dummy_img)
+        assert vision_tab.current_image is not None
+        assert vision_tab.btn_recognize.isEnabled() is True
+        assert vision_tab.btn_clear_img.isEnabled() is True
+
+        # Test zoom controls
+        init_zoom = vision_tab.image_viewer._zoom_factor
+        vision_tab.image_viewer.zoom_in()
+        assert vision_tab.image_viewer._zoom_factor > init_zoom
+
+        vision_tab.image_viewer.zoom_out()
+        vision_tab.image_viewer.fit_in_view()
+        assert vision_tab.image_viewer._zoom_factor == 1.0
+
+        # Test clear
+        vision_tab._clear_image()
+        assert vision_tab.current_image is None
+        assert vision_tab.btn_recognize.isEnabled() is False

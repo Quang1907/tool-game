@@ -5,7 +5,7 @@
 [![Apple Silicon](https://img.shields.io/badge/Architecture-Apple%20Silicon%20(ARM64)%20%2F%20Intel-blue)](https://apple.com)
 [![Python](https://img.shields.io/badge/Python-3.11+-brightgreen?logo=python)](https://python.org)
 [![PySide6](https://img.shields.io/badge/GUI-PySide6%20(Qt%20for%20Python)-green?logo=qt)](https://qt.io)
-[![Tests](https://img.shields.io/badge/Tests-49%20passed%20(100%25)-success?logo=pytest)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-55%20passed%20(100%25)-success?logo=pytest)](https://pytest.org)
 [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
 ---
@@ -24,10 +24,22 @@
 ## 2. Tính năng nổi bật
 
 ### 2.1. Nhận diện bài bằng Computer Vision & Chụp màn hình macOS
-- Chụp ảnh màn hình trực tiếp bằng công cụ cắt vùng native của macOS (`screencapture -i -r`).
-- Tiền xử lý ảnh (CLAHE, cân bằng tương phản, khử nhiễu) và tách từng lá bài.
-- Pipeline hỗ trợ nhận diện qua mạng nơ-ron ONNX Runtime hoặc khớp mẫu (Template Matching).
-- **Giao diện xác minh thông minh:** Cảnh báo bài trùng, thiếu lá hoặc nhận diện sai để người dùng chỉnh sửa trước khi xếp bài.
+- **Chụp màn hình linh hoạt:**
+  - Hỗ trợ chọn màn hình bất kỳ trong cấu hình nhiều màn hình (Multi-monitor).
+  - Hỗ trợ chọn cửa sổ ứng dụng (Chrome, Safari, Edge, Game, hoặc ứng dụng desktop khác) qua phím Space / click chuột.
+  - Hỗ trợ chọn vùng tùy ý bằng cách kéo chuột (`screencapture -i -s -r`).
+  - Tự động phát hiện và hướng dẫn cấp quyền macOS Screen Recording (không âm thầm trả về ảnh đen).
+- **Bộ xem ảnh Zoomable & Kéo Pan Retina:**
+  - Giữ nguyên độ phân giải vật lý Retina gốc, không bóp méo tỷ lệ.
+  - Zoom in/out bằng con lăn chuột hoặc nút bấm, nút 1:1 và Fit to View, kéo di chuyển vùng nhìn mượt mà.
+- **Quy trình nhận diện bài mạnh mẽ:**
+  - 3 chiến lược tách bài: Tự động tìm Contour, Cắt thanh ngang 13 lá (`Horizontal Strip 13`), và Cắt lưới 3 hàng 3-5-5 (`Grid 3 Rows`).
+  - Tiền xử lý tương phản thích ứng CLAHE, khử nhiễu song phương.
+  - Nhận diện rank (A, 2-10, J, Q, K) bằng template matching đa tỷ lệ với font hệ thống macOS.
+  - Phân loại chất bài (♠ ♣ ♦ ♥) bằng phân tích màu HSV kết hợp so khớp mẫu.
+- **Xác minh & Sửa bài thông minh:**
+  - Hiển thị badge độ tin cậy trực quan cho từng lá.
+  - Hộp thoại sửa bài 1 chạm cho phép sửa ngay rank/suit nếu có lá bị che khuất hoặc nhận diện nhầm trước khi giải.
 
 ### 2.2. Bộ đánh giá bài (Evaluator) & Xử lý luật Binh
 - Đánh giá **Chi Đầu (3 lá)**: Mậu thầu, Một đôi, Sám cô với đầy đủ kicker.

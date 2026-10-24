@@ -1,26 +1,28 @@
-"""Computer Vision screen capture and card recognition UI component."""
+"""Modern Computer Vision and Screen Capture component for macOS."""
 
 from __future__ import annotations
-from pathlib import Path
 from typing import List, Optional
-import cv2
 import numpy as np
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
-from app.core.card import Card, CardParser
+from app.core.card import Card
+from app.services.vision_service import VisionWorker
+from app.ui.components.card_edit_dialog import CardEditDialog
 from app.ui.components.card_widget import CardWidget
+from app.ui.components.zoomable_viewer import ZoomableImageViewer
 from app.vision.card_detector import CardDetector
 from app.vision.card_recognizer import CardRecognizer, DetectedCard
 from app.vision.recognition_validator import RecognitionValidator
@@ -28,7 +30,7 @@ from app.vision.screen_capture import ScreenCapture
 
 
 class VisionWidget(QWidget):
-    """Component for interactive screen capture, file loading, and card verification."""
+    """Component for interactive multi-monitor capture, window capture, zooming, and card verification."""
 
     cards_confirmed = Signal(list)  # Emits list[Card] when 13 valid cards confirmed
 
@@ -38,60 +40,126 @@ class VisionWidget(QWidget):
         self.recognizer = CardRecognizer()
         self.current_image: Optional[np.ndarray] = None
         self.detected_cards: List[DetectedCard] = []
+
+        self._vision_thread: Optional[QThread] = None
+        self._vision_worker: Optional[VisionWorker] = None
+
         self._init_ui()
 
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(16, 16, 16, 16)
-        main_layout.setSpacing(14)
+        main_layout.setContentsMargins(14, 14, 14, 14)
+        main_layout.setSpacing(12)
 
-        # Action Buttons Header
-        btn_layout = QHBoxLayout()
-        self.btn_capture = QPushButton("📷 Chụp vùng màn hình (macOS)")
-        self.btn_capture.setFixedHeight(36)
-        self.btn_capture.clicked.connect(self._on_capture_screen)
-        btn_layout.addWidget(self.btn_capture)
+        # 1. Top Action Toolbar
+        toolbar = QHBoxLayout()
+
+        # Multi-monitor selector
+        lbl_screen = QLabel("Màn hình:")
+        lbl_screen.setStyleSheet("font-weight: 600;")
+        toolbar.addWidget(lbl_screen)
+
+        self.combo_screens = QComboBox()
+        self._populate_screens()
+        toolbar.addWidget(self.combo_screens)
+
+        btn_cap_full = QPushButton("🖥️ Toàn màn hình", objectName="SecondaryBtn")
+        btn_cap_full.clicked.connect(self._on_capture_full_screen)
+        toolbar.addWidget(btn_cap_full)
+
+        self.btn_cap_window = QPushButton("🪟 Cửa sổ game / app", objectName="SecondaryBtn")
+        self.btn_cap_window.clicked.connect(self._on_capture_window)
+        toolbar.addWidget(self.btn_cap_window)
+
+        self.btn_cap_region = QPushButton("📷 Chụp vùng tự do (Drag)")
+        self.btn_cap_region.clicked.connect(self._on_capture_region)
+        toolbar.addWidget(self.btn_cap_region)
 
         self.btn_open_file = QPushButton("📂 Mở file ảnh...", objectName="SecondaryBtn")
-        self.btn_open_file.setFixedHeight(36)
         self.btn_open_file.clicked.connect(self._on_open_file)
-        btn_layout.addWidget(self.btn_open_file)
+        toolbar.addWidget(self.btn_open_file)
 
-        btn_layout.addStretch()
+        toolbar.addStretch()
 
-        self.btn_recognize = QPushButton("🔍 Nhận diện bài")
-        self.btn_recognize.setFixedHeight(36)
+        self.btn_recapture = QPushButton("🔄 Chụp lại", objectName="SecondaryBtn")
+        self.btn_recapture.setEnabled(False)
+        self.btn_recapture.clicked.connect(self._on_capture_region)
+        toolbar.addWidget(self.btn_recapture)
+
+        self.btn_clear_img = QPushButton("❌ Hủy ảnh", objectName="DangerBtn")
+        self.btn_clear_img.setEnabled(False)
+        self.btn_clear_img.clicked.connect(self._clear_image)
+        toolbar.addWidget(self.btn_clear_img)
+
+        main_layout.addLayout(toolbar)
+
+        # 2. Main Content Split (Image Viewer on Left/Center, Controls on Right/Bottom)
+        box_viewer = QGroupBox("Xem trước ảnh (Hỗ trợ Zoom & Kéo ảnh)")
+        layout_viewer = QVBoxLayout(box_viewer)
+
+        # Viewer toolbar (Zoom In, Zoom Out, Fit, 100%)
+        viewer_tools = QHBoxLayout()
+        btn_zoom_in = QPushButton("🔍+ Phóng to", objectName="SecondaryBtn")
+        btn_zoom_in.clicked.connect(lambda: self.image_viewer.zoom_in())
+        viewer_tools.addWidget(btn_zoom_in)
+
+        btn_zoom_out = QPushButton("🔍- Thu nhỏ", objectName="SecondaryBtn")
+        btn_zoom_out.clicked.connect(lambda: self.image_viewer.zoom_out())
+        viewer_tools.addWidget(btn_zoom_out)
+
+        btn_fit = QPushButton("↕ Vừa khung", objectName="SecondaryBtn")
+        btn_fit.clicked.connect(lambda: self.image_viewer.fit_in_view())
+        viewer_tools.addWidget(btn_fit)
+
+        btn_actual = QPushButton("1:1 Kích thước gốc", objectName="SecondaryBtn")
+        btn_actual.clicked.connect(lambda: self.image_viewer.zoom_actual_size())
+        viewer_tools.addWidget(btn_actual)
+
+        viewer_tools.addStretch()
+
+        # Detection Mode Selector
+        viewer_tools.addWidget(QLabel("Chế độ quét:"))
+        self.combo_mode = QComboBox()
+        self.combo_mode.addItems([
+            "Tự động tìm khung bài (Auto)",
+            "Cắt đều 13 lá ngang (13-Card Row)",
+            "Cắt lưới 3 chi 3-5-5 (3-Row Grid)",
+        ])
+        viewer_tools.addWidget(self.combo_mode)
+
+        self.btn_recognize = QPushButton("🔍 Nhận diện lá bài")
+        self.btn_recognize.setFixedHeight(30)
         self.btn_recognize.setEnabled(False)
-        self.btn_recognize.clicked.connect(self._on_recognize)
-        btn_layout.addWidget(self.btn_recognize)
+        self.btn_recognize.clicked.connect(self._start_recognition)
+        viewer_tools.addWidget(self.btn_recognize)
 
-        main_layout.addLayout(btn_layout)
+        layout_viewer.addLayout(viewer_tools)
 
-        # Image Preview Box
-        box_preview = QGroupBox("Xem trước ảnh màn hình")
-        layout_preview = QVBoxLayout(box_preview)
+        # Zoomable Image Viewer
+        self.image_viewer = ZoomableImageViewer()
+        self.image_viewer.setMinimumHeight(280)
+        layout_viewer.addWidget(self.image_viewer)
 
-        self.lbl_image_preview = QLabel("Chưa có ảnh. Bấm 'Chụp vùng màn hình' hoặc 'Mở file ảnh'.")
-        self.lbl_image_preview.setAlignment(Qt.AlignCenter)
-        self.lbl_image_preview.setMinimumHeight(220)
-        self.lbl_image_preview.setStyleSheet(
-            "background-color: #141414; border: 1px dashed #3A3A3C; border-radius: 6px; color: #8E8E93;"
-        )
-        layout_preview.addWidget(self.lbl_image_preview)
-        main_layout.addWidget(box_preview)
+        main_layout.addWidget(box_viewer)
 
-        # Detected Cards Result Box
-        box_cards = QGroupBox("Kết quả nhận diện bài (Cho phép sửa thủ công)")
+        # 3. Progress Bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(18)
+        self.progress_bar.setVisible(False)
+        main_layout.addWidget(self.progress_bar)
+
+        # 4. Results & Editing Section
+        box_cards = QGroupBox("Danh sách lá bài đã nhận diện (Click vào lá để sửa thủ công)")
         layout_cards = QVBoxLayout(box_cards)
 
-        self.lbl_validation_msg = QLabel("Chưa quét bài.")
+        self.lbl_validation_msg = QLabel("Chưa có dữ liệu bài.")
         self.lbl_validation_msg.setStyleSheet("font-weight: 600; color: #8E8E93;")
         layout_cards.addWidget(self.lbl_validation_msg)
 
-        # Scroll Area for detected cards
+        # Scroll Area for card thumbnails
         self.scroll_cards = QScrollArea()
         self.scroll_cards.setWidgetResizable(True)
-        self.scroll_cards.setFixedHeight(120)
+        self.scroll_cards.setFixedHeight(125)
         self.scroll_cards.setStyleSheet("background-color: #1E1E1E; border: none;")
 
         self.cards_container = QWidget()
@@ -101,36 +169,74 @@ class VisionWidget(QWidget):
         self.scroll_cards.setWidget(self.cards_container)
         layout_cards.addWidget(self.scroll_cards)
 
-        # Confirmation Action
-        footer_layout = QHBoxLayout()
-        footer_layout.addStretch()
+        # Confirmation Footer
+        footer = QHBoxLayout()
+        self.lbl_instructions = QLabel("💡 Mẹo: Bấm trực tiếp vào lá bài phía trên để đổi giá trị nếu nhận diện chưa đúng.")
+        self.lbl_instructions.setStyleSheet("color: #8E8E93; font-style: italic;")
+        footer.addWidget(self.lbl_instructions)
 
-        self.btn_confirm = QPushButton("Xác nhận & Chuyển sang Xếp bài")
+        footer.addStretch()
+
+        self.btn_confirm = QPushButton("Xác nhận 13 lá & Chuyển sang Xếp bài")
         self.btn_confirm.setFixedHeight(38)
         self.btn_confirm.setEnabled(False)
         self.btn_confirm.clicked.connect(self._on_confirm_cards)
-        footer_layout.addWidget(self.btn_confirm)
+        footer.addWidget(self.btn_confirm)
 
-        layout_cards.addLayout(footer_layout)
+        layout_cards.addLayout(footer)
         main_layout.addWidget(box_cards)
 
-    def _on_capture_screen(self) -> None:
+    def _populate_screens(self) -> None:
+        """Populates screen dropdown with connected display monitors."""
+        self.combo_screens.clear()
+        screens = ScreenCapture.get_available_screens()
+        for s in screens:
+            label = f"{s.name} ({s.width}x{s.height})"
+            if s.is_primary:
+                label += " [Chính]"
+            self.combo_screens.addItem(label, s.index)
+
+    def _on_capture_region(self) -> None:
         try:
             img = ScreenCapture.capture_interactive_region()
             if img is not None:
                 self.set_image(img)
         except PermissionError as e:
-            QMessageBox.warning(
-                self,
-                "Yêu cầu quyền Screen Recording",
-                f"{e}\n\nHãy mở System Settings -> Privacy & Security -> Screen Recording để cấp quyền.",
-            )
+            self._show_permission_alert(str(e))
         except Exception as e:
             QMessageBox.critical(self, "Lỗi chụp màn hình", str(e))
 
+    def _on_capture_window(self) -> None:
+        try:
+            img = ScreenCapture.capture_window()
+            if img is not None:
+                self.set_image(img)
+        except PermissionError as e:
+            self._show_permission_alert(str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi chụp cửa sổ", str(e))
+
+    def _on_capture_full_screen(self) -> None:
+        display_idx = self.combo_screens.currentData() or 1
+        try:
+            img = ScreenCapture.capture_full_screen(display_index=display_idx)
+            if img is not None:
+                self.set_image(img)
+        except PermissionError as e:
+            self._show_permission_alert(str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi chụp toàn màn hình", str(e))
+
+    def _show_permission_alert(self, message: str) -> None:
+        QMessageBox.warning(
+            self,
+            "Yêu cầu quyền Screen Recording",
+            f"{message}\n\nHãy vào: System Settings -> Privacy & Security -> Screen Recording.",
+        )
+
     def _on_open_file(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Chọn file ảnh bàn bài", "", "Images (*.png *.jpg *.jpeg *.bmp *.webp)"
+            self, "Chọn file ảnh bàn bài", "", "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff)"
         )
         if file_path:
             try:
@@ -142,55 +248,111 @@ class VisionWidget(QWidget):
     def set_image(self, image: np.ndarray) -> None:
         self.current_image = image
         self.btn_recognize.setEnabled(True)
+        self.btn_recapture.setEnabled(True)
+        self.btn_clear_img.setEnabled(True)
 
-        # Render preview pixmap
-        h, w, ch = image.shape
-        bytes_per_line = ch * w
-        # OpenCV is BGR, convert to RGB for Qt
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        pix = QPixmap.fromImage(qimg)
+        self.image_viewer.set_image(image)
+        self.lbl_validation_msg.setText("Ảnh đã tải lên. Bấm 'Nhận diện lá bài' để quét.")
 
-        # Scale down if large
-        scaled_pix = pix.scaled(
-            self.lbl_image_preview.width(), 260, Qt.KeepAspectRatio, Qt.SmoothTransformation
-        )
-        self.lbl_image_preview.setPixmap(scaled_pix)
+    def _clear_image(self) -> None:
+        self.current_image = None
+        self.detected_cards.clear()
+        self.image_viewer._scene.clear()
+        self.btn_recognize.setEnabled(False)
+        self.btn_recapture.setEnabled(False)
+        self.btn_clear_img.setEnabled(False)
+        self.btn_confirm.setEnabled(False)
+        self._display_detected_cards()
+        self.lbl_validation_msg.setText("Chưa có ảnh.")
 
-    def _on_recognize(self) -> None:
+    def _start_recognition(self) -> None:
         if self.current_image is None:
             return
 
-        # 1. Detect candidate card crops
-        crops = self.detector.detect_cards(self.current_image)
-        if not crops:
-            # Fallback if contours not card-shaped: split image into 13 horizontal/vertical slices
-            QMessageBox.information(
-                self,
-                "Thông báo",
-                "Không tự động tìm thấy khung viền 13 lá. "
-                "Bạn có thể dùng tab Nhập bài thủ công hoặc kiểm tra model nhận diện.",
-            )
-            return
+        mode_idx = self.combo_mode.currentIndex()
+        mode_str = "AUTO"
+        if mode_idx == 1:
+            mode_str = "STRIP_13"
+        elif mode_idx == 2:
+            mode_str = "GRID_3_5_5"
 
-        # 2. Run recognition
-        self.detected_cards = self.recognizer.recognize_all(crops)
+        self.btn_recognize.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+        self.lbl_validation_msg.setText("Đang chạy Computer Vision nhận diện bài...")
+
+        # Setup background thread
+        self._vision_thread = QThread()
+        self._vision_worker = VisionWorker(
+            image=self.current_image,
+            detector=self.detector,
+            recognizer=self.recognizer,
+            mode=mode_str,
+        )
+        self._vision_worker.moveToThread(self._vision_thread)
+
+        self._vision_thread.started.connect(self._vision_worker.run)
+        self._vision_worker.progress.connect(self._on_vision_progress)
+        self._vision_worker.finished.connect(self._on_vision_finished)
+        self._vision_worker.error.connect(self._on_vision_error)
+
+        self._vision_thread.start()
+
+    def _on_vision_progress(self, current: int, total: int, status: str) -> None:
+        self.progress_bar.setValue(current)
+        self.lbl_validation_msg.setText(status)
+
+    def _on_vision_finished(self, detected_cards: List[DetectedCard]) -> None:
+        if self._vision_thread and self._vision_thread.isRunning():
+            self._vision_thread.quit()
+            self._vision_thread.wait()
+
+        self.progress_bar.setVisible(False)
+        self.btn_recognize.setEnabled(True)
+        self.detected_cards = detected_cards
+
+        # Update viewer bounding boxes
+        if self.current_image is not None:
+            self.image_viewer.set_image(self.current_image, detected_cards)
+
         self._display_detected_cards()
 
+    def _on_vision_error(self, err_msg: str) -> None:
+        if self._vision_thread and self._vision_thread.isRunning():
+            self._vision_thread.quit()
+            self._vision_thread.wait()
+
+        self.progress_bar.setVisible(False)
+        self.btn_recognize.setEnabled(True)
+        QMessageBox.critical(self, "Lỗi nhận diện bài", err_msg)
+        self.lbl_validation_msg.setText(f"Lỗi: {err_msg}")
+
     def _display_detected_cards(self) -> None:
-        # Clear existing card widgets
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
         for idx, det in enumerate(self.detected_cards):
-            card_widget = CardWidget(card=det.card, width=46, height=66, selectable=False)
-            self.cards_layout.addWidget(card_widget)
+            card_col = QVBoxLayout()
+            card_col.setSpacing(2)
+
+            w = CardWidget(card=det.card, width=48, height=70, selectable=True)
+            w.clicked.connect(lambda _, i=idx: self._open_card_editor(i))
+            card_col.addWidget(w)
+
+            conf_lbl = QLabel(f"{det.confidence*100:.0f}%" if det.card else "?")
+            conf_lbl.setAlignment(Qt.AlignCenter)
+            conf_color = "#30D158" if det.confidence >= 0.70 else "#FF9F0A"
+            conf_lbl.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {conf_color};")
+            card_col.addWidget(conf_lbl)
+
+            container = QWidget()
+            container.setLayout(card_col)
+            self.cards_layout.addWidget(container)
 
         self.cards_layout.addStretch()
 
-        # Validate
         report = RecognitionValidator.validate(self.detected_cards)
         self.lbl_validation_msg.setText(report.message)
         if report.is_valid:
@@ -199,6 +361,27 @@ class VisionWidget(QWidget):
         else:
             self.lbl_validation_msg.setStyleSheet("color: #FF9F0A; font-weight: 600;")
             self.btn_confirm.setEnabled(False)
+
+    def _open_card_editor(self, index: int) -> None:
+        if not (0 <= index < len(self.detected_cards)):
+            return
+
+        current = self.detected_cards[index].card
+        dialog = CardEditDialog(current_card=current, parent=self)
+        if dialog.exec() and dialog.selected_card:
+            # Update detected card
+            old_det = self.detected_cards[index]
+            self.detected_cards[index] = DetectedCard(
+                card=dialog.selected_card,
+                confidence=1.0,  # Manually verified by user
+                bbox=old_det.bbox,
+                raw_crop=old_det.raw_crop,
+                is_verified=True,
+            )
+            # Refresh UI and overlay
+            if self.current_image is not None:
+                self.image_viewer.set_image(self.current_image, self.detected_cards)
+            self._display_detected_cards()
 
     def _on_confirm_cards(self) -> None:
         cards = [d.card for d in self.detected_cards if d.card is not None]
