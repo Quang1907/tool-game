@@ -1,0 +1,22 @@
+{
+  "players": 4,
+  "hand_size": 13,
+  "front_size": 3,
+  "middle_size": 5,
+  "back_size": 5,
+  "point_win_hand": 1.0,
+  "point_loss_hand": -1.0,
+  "point_tie_hand": 0.0,
+  "sweep_single_player_bonus": 3.0,
+  "sweep_all_players_bonus": 6.0,
+  "foul_penalty_points": -12.0,
+  "wheel_straight_rule": "LOWEST",
+  "special_hands_enabled": true,
+  "special_hand_scores": {
+    "DRAGON": 26.0,
+    "SAME_COLOR": 20.0,
+    "SIX_PAIRS": 12.0,
+    "THREE_STRAIGHTS": 12.0,
+    "THREE_FLUSHES": 12.0
+  }
+}
