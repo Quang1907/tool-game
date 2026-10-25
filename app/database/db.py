@@ -95,4 +95,19 @@ class DatabaseManager:
                     value TEXT NOT NULL,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS card_references (
+                    id TEXT PRIMARY KEY,
+                    card_code TEXT NOT NULL,
+                    rank TEXT NOT NULL,
+                    suit TEXT NOT NULL,
+                    image_path TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'user_confirmed',
+                    confirmed BOOLEAN NOT NULL DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    image_hash TEXT NOT NULL,
+                    metadata_json TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_card_references_code ON card_references(card_code);
+                CREATE INDEX IF NOT EXISTS idx_card_references_hash ON card_references(image_hash);
             """)

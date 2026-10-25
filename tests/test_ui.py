@@ -81,3 +81,74 @@ class TestUIComponents:
         vision_tab._clear_image()
         assert vision_tab.current_image is None
         assert vision_tab.btn_recognize.isEnabled() is False
+
+    def test_card_edit_dialog_confirmation_and_save_reference(self, qapp, tmp_path):
+        import numpy as np
+        from app.core.card import Card, Rank, Suit
+        from app.database.db import DatabaseManager
+        from app.ui.components.card_edit_dialog import CardEditDialog
+        from app.vision.card_recognizer import DetectedCard
+        from app.vision.card_reference_library import CardReferenceLibrary
+
+        db = DatabaseManager(db_path=tmp_path / "test_ui.db")
+        lib = CardReferenceLibrary(db_manager=db, storage_dir=tmp_path / "refs")
+
+        # Mock detected card crop
+        raw_crop = np.full((140, 100, 3), 240, dtype=np.uint8)
+        det = DetectedCard(
+            card=Card(Rank.ACE, Suit.SPADES),
+            confidence=0.88,
+            bbox=(10, 20, 100, 140),
+            raw_crop=raw_crop,
+            alternative_candidates=[("AS", 0.88), ("4S", 0.62)],
+        )
+
+        dialog = CardEditDialog(detected_card=det, reference_library=lib)
+        assert "A♠" in dialog.lbl_pred_badge.text()
+        assert dialog.selected_card == Card(Rank.ACE, Suit.SPADES)
+
+        # Select King of Hearts
+        card_kh = Card(Rank.KING, Suit.HEARTS)
+        dialog._select_card(card_kh)
+        assert dialog.selected_card == card_kh
+
+        # Save as reference
+        from unittest.mock import patch
+        with patch("PySide6.QtWidgets.QMessageBox.information") as mock_info:
+            dialog._on_save_as_reference_clicked()
+            assert dialog.saved_as_reference is True
+            assert dialog.is_confirmed is True
+
+        # Verify reference library persisted the crop under KH
+        saved_refs = lib.get_references_for_card("KH")
+        assert len(saved_refs) == 1
+        assert saved_refs[0].card_code == "KH"
+
+    def test_card_reference_manager_dialog(self, qapp, tmp_path):
+        from app.core.card import Card, Rank, Suit
+        from app.database.db import DatabaseManager
+        from app.ui.components.card_reference_manager import CardReferenceManagerDialog
+        from app.vision.card_reference_library import CardReferenceLibrary
+        import numpy as np
+
+        db = DatabaseManager(db_path=tmp_path / "test_mgr.db")
+        lib = CardReferenceLibrary(db_manager=db, storage_dir=tmp_path / "refs")
+
+        # Add sample for 10D
+        img = np.full((120, 90, 3), 245, dtype=np.uint8)
+        lib.add_reference(image=img, card=Card(Rank.TEN, Suit.DIAMONDS))
+
+        dialog = CardReferenceManagerDialog(reference_library=lib)
+        assert dialog.list_cards.count() == 52
+
+        # Test search filter
+        dialog.input_search.setText("10D")
+        assert dialog.list_cards.count() == 1
+        item = dialog.list_cards.item(0)
+        assert "10D" in item.text()
+
+        # Reset search
+        dialog.input_search.setText("")
+        assert dialog.list_cards.count() == 52
+        dialog.close()
+

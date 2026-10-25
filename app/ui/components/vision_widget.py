@@ -21,10 +21,12 @@ from PySide6.QtWidgets import (
 from app.core.card import Card
 from app.services.vision_service import VisionWorker
 from app.ui.components.card_edit_dialog import CardEditDialog
+from app.ui.components.card_reference_manager import CardReferenceManagerDialog
 from app.ui.components.card_widget import CardWidget
 from app.ui.components.zoomable_viewer import ZoomableImageViewer
 from app.vision.card_detector import CardDetector
 from app.vision.card_recognizer import CardRecognizer, DetectedCard
+from app.vision.card_reference_library import CardReferenceLibrary
 from app.vision.recognition_validator import RecognitionValidator
 from app.vision.screen_capture import ScreenCapture
 
@@ -37,7 +39,8 @@ class VisionWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.detector = CardDetector()
-        self.recognizer = CardRecognizer()
+        self.reference_library = CardReferenceLibrary()
+        self.recognizer = CardRecognizer(reference_library=self.reference_library)
         self.current_image: Optional[np.ndarray] = None
         self.detected_cards: List[DetectedCard] = []
 
@@ -78,6 +81,11 @@ class VisionWidget(QWidget):
         self.btn_open_file = QPushButton("📂 Mở file ảnh...", objectName="SecondaryBtn")
         self.btn_open_file.clicked.connect(self._on_open_file)
         toolbar.addWidget(self.btn_open_file)
+
+        self.btn_ref_manager = QPushButton("📚 Thư viện ảnh mẫu", objectName="SecondaryBtn")
+        self.btn_ref_manager.setToolTip("Quản lý 52 lá bài và các ảnh mẫu đã xác nhận")
+        self.btn_ref_manager.clicked.connect(self._open_reference_manager)
+        toolbar.addWidget(self.btn_ref_manager)
 
         toolbar.addStretch()
 
@@ -171,11 +179,17 @@ class VisionWidget(QWidget):
 
         # Confirmation Footer
         footer = QHBoxLayout()
-        self.lbl_instructions = QLabel("💡 Mẹo: Bấm trực tiếp vào lá bài phía trên để đổi giá trị nếu nhận diện chưa đúng.")
+        self.lbl_instructions = QLabel("💡 Mẹo: Bấm trực tiếp vào lá bài phía trên để đổi giá trị và lưu làm ảnh mẫu.")
         self.lbl_instructions.setStyleSheet("color: #8E8E93; font-style: italic;")
         footer.addWidget(self.lbl_instructions)
 
         footer.addStretch()
+
+        self.btn_review_uncertain = QPushButton("⚠️ Duyệt bài nghi ngờ", objectName="SecondaryBtn")
+        self.btn_review_uncertain.setToolTip("Duyệt nhanh và xác nhận các lá bài có độ tin cậy thấp hoặc nghi ngờ")
+        self.btn_review_uncertain.setEnabled(False)
+        self.btn_review_uncertain.clicked.connect(self._review_low_confidence_cards)
+        footer.addWidget(self.btn_review_uncertain)
 
         self.btn_confirm = QPushButton("Xác nhận 13 lá & Chuyển sang Xếp bài")
         self.btn_confirm.setFixedHeight(38)
@@ -333,6 +347,7 @@ class VisionWidget(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
+        has_uncertain = False
         for idx, det in enumerate(self.detected_cards):
             card_col = QVBoxLayout()
             card_col.setSpacing(2)
@@ -341,10 +356,22 @@ class VisionWidget(QWidget):
             w.clicked.connect(lambda _, i=idx: self._open_card_editor(i))
             card_col.addWidget(w)
 
-            conf_lbl = QLabel(f"{det.confidence*100:.0f}%" if det.card else "?")
+            # Badge / Label for confidence & reference match
+            conf_pct = int(det.confidence * 100) if det.card else 0
+            if det.is_reference_match:
+                conf_text = f"{conf_pct}% [Mẫu]"
+                conf_color = "#30D158"
+            elif det.is_uncertain:
+                has_uncertain = True
+                conf_text = f"{conf_pct}% [Nghi ngờ]"
+                conf_color = "#FF9F0A"
+            else:
+                conf_text = f"{conf_pct}%"
+                conf_color = "#30D158" if det.confidence >= 0.70 else "#FF9F0A"
+
+            conf_lbl = QLabel(conf_text)
             conf_lbl.setAlignment(Qt.AlignCenter)
-            conf_color = "#30D158" if det.confidence >= 0.70 else "#FF9F0A"
-            conf_lbl.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {conf_color};")
+            conf_lbl.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {conf_color};")
             card_col.addWidget(conf_lbl)
 
             container = QWidget()
@@ -353,37 +380,81 @@ class VisionWidget(QWidget):
 
         self.cards_layout.addStretch()
 
+        # Update Review Uncertain button state
+        has_low_conf = any(not d.is_verified and d.confidence < 0.70 for d in self.detected_cards)
+        self.btn_review_uncertain.setEnabled(has_uncertain or has_low_conf)
+
         report = RecognitionValidator.validate(self.detected_cards)
-        self.lbl_validation_msg.setText(report.message)
-        if report.is_valid:
-            self.lbl_validation_msg.setStyleSheet("color: #30D158; font-weight: 600;")
-            self.btn_confirm.setEnabled(True)
-        else:
+        if has_uncertain or has_low_conf:
+            self.lbl_validation_msg.setText(f"{report.message} (Có lá bài cần xác nhận, bấm '⚠️ Duyệt bài nghi ngờ')")
             self.lbl_validation_msg.setStyleSheet("color: #FF9F0A; font-weight: 600;")
-            self.btn_confirm.setEnabled(False)
+        else:
+            self.lbl_validation_msg.setText(report.message)
+            if report.is_valid:
+                self.lbl_validation_msg.setStyleSheet("color: #30D158; font-weight: 600;")
+            else:
+                self.lbl_validation_msg.setStyleSheet("color: #FF9F0A; font-weight: 600;")
+
+        self.btn_confirm.setEnabled(report.is_valid)
 
     def _open_card_editor(self, index: int) -> None:
         if not (0 <= index < len(self.detected_cards)):
             return
 
-        current = self.detected_cards[index].card
-        dialog = CardEditDialog(current_card=current, parent=self)
+        det = self.detected_cards[index]
+        dialog = CardEditDialog(
+            current_card=det.card,
+            detected_card=det,
+            reference_library=self.reference_library,
+            parent=self,
+        )
         if dialog.exec() and dialog.selected_card:
             # Update detected card
-            old_det = self.detected_cards[index]
             self.detected_cards[index] = DetectedCard(
                 card=dialog.selected_card,
                 confidence=1.0,  # Manually verified by user
-                bbox=old_det.bbox,
-                raw_crop=old_det.raw_crop,
+                bbox=det.bbox,
+                raw_crop=det.raw_crop,
                 is_verified=True,
+                is_reference_match=dialog.saved_as_reference or det.is_reference_match,
+                is_uncertain=False,
             )
+            # If user saved reference, reload library cache immediately
+            if dialog.saved_as_reference:
+                self.reference_library.reload_cache()
+
             # Refresh UI and overlay
             if self.current_image is not None:
                 self.image_viewer.set_image(self.current_image, self.detected_cards)
             self._display_detected_cards()
 
+    def _review_low_confidence_cards(self) -> None:
+        """Sequential review of low-confidence or uncertain cards."""
+        low_indices = [
+            i for i, d in enumerate(self.detected_cards)
+            if not d.is_verified and (d.confidence < 0.70 or d.is_uncertain or d.card is None)
+        ]
+        if not low_indices:
+            QMessageBox.information(
+                self,
+                "Hoàn tất duyệt bài",
+                "Tất cả các lá bài hiện tại đều có độ tin cậy cao hoặc đã được xác nhận!",
+            )
+            return
+
+        for idx in low_indices:
+            self._open_card_editor(idx)
+
+    def _open_reference_manager(self) -> None:
+        """Opens CardReferenceManagerDialog."""
+        dialog = CardReferenceManagerDialog(
+            reference_library=self.reference_library,
+            parent=self,
+        )
+        dialog.exec()
+
     def _on_confirm_cards(self) -> None:
         cards = [d.card for d in self.detected_cards if d.card is not None]
         if len(cards) == 13:
+            self.cards_confirmed.emit(cards)
             self.cards_confirmed.emit(cards)

@@ -6,6 +6,11 @@ from app.vision.card_detector import CardDetector, CardCrop
 from app.vision.template_engine import CardTemplateEngine
 from app.vision.card_recognizer import CardRecognizer, DetectedCard
 from app.vision.recognition_validator import RecognitionValidator, ValidationReport
+from app.vision.card_reference_library import (
+    CardReference,
+    CardReferenceLibrary,
+    CardReferenceMatch,
+)
 
 __all__ = [
     "ScreenCapture",
@@ -18,4 +23,7 @@ __all__ = [
     "DetectedCard",
     "RecognitionValidator",
     "ValidationReport",
+    "CardReference",
+    "CardReferenceLibrary",
+    "CardReferenceMatch",
 ]
