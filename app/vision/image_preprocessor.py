@@ -96,7 +96,125 @@ class ImagePreprocessor:
         return card_crop
 
     @classmethod
+    def refine_card_boundary(
+        cls,
+        image: np.ndarray,
+        bbox: Tuple[int, int, int, int],
+        pad: int = 6,
+    ) -> Tuple[int, int, int, int]:
+        """Refines a candidate bounding box to snugly fit the physical white card body.
+
+        Trims away green selection glows, table felt, gold UI frames, and drop shadows
+        by finding the actual boundary of the white card face within the local search patch.
+        """
+        img_h, img_w = image.shape[:2]
+        x, y, w, h = bbox
+
+        # Expand slightly to ensure card edges are not pre-clipped
+        x1 = max(0, x - pad)
+        y1 = max(0, y - pad)
+        x2 = min(img_w, x + w + pad)
+        y2 = min(img_h, y + h + pad)
+
+        patch = image[y1:y2, x1:x2]
+        if patch.size == 0 or patch.shape[0] < 15 or patch.shape[1] < 15:
+            return bbox
+
+        hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+
+        # White paper: low saturation, adequate brightness
+        is_white = (hsv[:, :, 1] <= 110) & (hsv[:, :, 2] >= 115) & (gray >= 115)
+
+        # Exclude strong green selection halos explicitly
+        is_green_glow = (hsv[:, :, 0] >= 35) & (hsv[:, :, 0] <= 85) & (hsv[:, :, 1] > 55)
+        is_white = is_white & (~is_green_glow)
+
+        white_mask = is_white.astype(np.uint8) * 255
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        cleaned = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
+
+        contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return bbox
+
+        patch_h, patch_w = patch.shape[:2]
+        center_x, center_y = patch_w / 2.0, patch_h / 2.0
+        min_card_area = max(100, int(w * h * 0.40))
+
+        best_cnt = None
+        best_dist = 999999.0
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < min_card_area:
+                continue
+            bx, by, bw, bh = cv2.boundingRect(cnt)
+            c_dist = abs((bx + bw / 2.0) - center_x) + abs((by + bh / 2.0) - center_y)
+            if c_dist < best_dist:
+                best_dist = c_dist
+                best_cnt = cnt
+
+        if best_cnt is not None:
+            bx, by, bw, bh = cv2.boundingRect(best_cnt)
+            aspect = bh / float(bw) if bw > 0 else 0
+            if 0.5 <= aspect <= 2.2 and bw >= 16 and bh >= 24:
+                return (x1 + bx, y1 + by, bw, bh)
+
+        return bbox
+
+    @classmethod
+    def order_quadrilateral_points(cls, pts: np.ndarray | List[Tuple[int, int]]) -> np.ndarray:
+        """Orders 4 coordinates clockwise: top-left, top-right, bottom-right, bottom-left."""
+        pts_arr = np.array(pts, dtype=np.float32).reshape(4, 2)
+        rect = np.zeros((4, 2), dtype=np.float32)
+
+        # Top-left has smallest sum, bottom-right has largest sum
+        s = pts_arr.sum(axis=1)
+        rect[0] = pts_arr[np.argmin(s)]
+        rect[2] = pts_arr[np.argmax(s)]
+
+        # Top-right has smallest difference, bottom-left has largest difference
+        diff = np.diff(pts_arr, axis=1)
+        rect[1] = pts_arr[np.argmin(diff)]
+        rect[3] = pts_arr[np.argmax(diff)]
+
+        return rect
+
+    @classmethod
+    def warp_perspective_polygon(
+        cls,
+        image: np.ndarray,
+        polygon: List[Tuple[int, int]] | np.ndarray,
+        target_w: int = CARD_TARGET_WIDTH,
+        target_h: int = CARD_TARGET_HEIGHT,
+    ) -> np.ndarray:
+        """Applies 4-point perspective warp to extract and rectify a rotated card patch."""
+        pts = np.array(polygon, dtype=np.float32)
+        if len(pts) != 4:
+            x, y, w, h = cv2.boundingRect(pts.astype(np.int32))
+            crop = image[max(0, y):y+h, max(0, x):x+w]
+            return cls.rectify_card(crop)
+
+        ordered = cls.order_quadrilateral_points(pts)
+        dst = np.float32([
+            [0, 0],
+            [target_w - 1, 0],
+            [target_w - 1, target_h - 1],
+            [0, target_h - 1],
+        ])
+
+        M = cv2.getPerspectiveTransform(ordered, dst)
+        warped = cv2.warpPerspective(image, M, (target_w, target_h), flags=cv2.INTER_LINEAR)
+        cleaned = cls.remove_green_border(warped)
+        return cv2.resize(cleaned, (target_w, target_h))
+
+    @classmethod
     def rectify_card(cls, card_crop: np.ndarray) -> np.ndarray:
         """Resizes a card patch to normalized target dimensions (120x168) with green border removal."""
         cleaned = cls.remove_green_border(card_crop)
         return cv2.resize(cleaned, (cls.CARD_TARGET_WIDTH, cls.CARD_TARGET_HEIGHT))
+
+

@@ -14,15 +14,15 @@ def main() -> int:
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 
+    # Set High DPI Rounding Policy for Retina displays before creating QApplication instance
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
+
     app = QApplication(sys.argv)
     app.setApplicationName("Binh 13 Analyzer")
     app.setOrganizationName("Antigravity")
     app.setApplicationDisplayName("Binh 13 Analyzer — Mậu Binh CV & Monte Carlo")
-
-    # Set High DPI Rounding Policy for Retina displays
-    app.setHighDpiScaleFactorRoundingPolicy(
-        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
-    )
 
     window = MainWindow()
     window.show()

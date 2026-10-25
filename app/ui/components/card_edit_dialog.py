@@ -74,14 +74,35 @@ class CardEditDialog(QDialog):
         lbl_crop_title.setStyleSheet("font-weight: 700; color: #0A84FF; font-size: 13px;")
         left_panel.addWidget(lbl_crop_title)
 
-        # Card crop image viewer (Full card)
+        # Side-by-side card comparison (Real crop vs Matched reference sample)
+        row_images = QHBoxLayout()
+        row_images.setSpacing(6)
+
+        col_crop = QVBoxLayout()
+        col_crop.setSpacing(2)
+        lbl_c_tag = QLabel("Ảnh Crop Thực Tế")
+        lbl_c_tag.setStyleSheet("font-size: 10px; color: #8E8E93;")
+        col_crop.addWidget(lbl_c_tag, alignment=Qt.AlignCenter)
         self.lbl_crop_img = QLabel()
         self.lbl_crop_img.setAlignment(Qt.AlignCenter)
-        self.lbl_crop_img.setFixedSize(130, 180)
-        self.lbl_crop_img.setStyleSheet(
-            "background-color: #1C1C1E; border: 2px solid #3A3A3C; border-radius: 8px; padding: 2px;"
-        )
-        left_panel.addWidget(self.lbl_crop_img, alignment=Qt.AlignCenter)
+        self.lbl_crop_img.setFixedSize(90, 128)
+        self.lbl_crop_img.setStyleSheet("background-color: #1C1C1E; border: 1px solid #3A3A3C; border-radius: 6px;")
+        col_crop.addWidget(self.lbl_crop_img, alignment=Qt.AlignCenter)
+        row_images.addLayout(col_crop)
+
+        col_ref = QVBoxLayout()
+        col_ref.setSpacing(2)
+        lbl_ref_tag = QLabel("Mẫu Đối Chiếu")
+        lbl_ref_tag.setStyleSheet("font-size: 10px; color: #30D158;")
+        col_ref.addWidget(lbl_ref_tag, alignment=Qt.AlignCenter)
+        self.lbl_matched_ref_img = QLabel()
+        self.lbl_matched_ref_img.setAlignment(Qt.AlignCenter)
+        self.lbl_matched_ref_img.setFixedSize(90, 128)
+        self.lbl_matched_ref_img.setStyleSheet("background-color: #1C1C1E; border: 1px solid #30D158; border-radius: 6px;")
+        col_ref.addWidget(self.lbl_matched_ref_img, alignment=Qt.AlignCenter)
+        row_images.addLayout(col_ref)
+
+        left_panel.addLayout(row_images)
 
         # Dedicated Rank Crop and Suit Crop previews
         row_crops = QHBoxLayout()
@@ -93,7 +114,7 @@ class CardEditDialog(QDialog):
         lbl_r_title.setStyleSheet("font-size: 10px; color: #8E8E93;")
         box_r.addWidget(lbl_r_title, alignment=Qt.AlignCenter)
         self.lbl_rank_crop = QLabel()
-        self.lbl_rank_crop.setFixedSize(48, 48)
+        self.lbl_rank_crop.setFixedSize(44, 44)
         self.lbl_rank_crop.setAlignment(Qt.AlignCenter)
         self.lbl_rank_crop.setStyleSheet("background-color: #1C1C1E; border: 1px solid #3A3A3C; border-radius: 4px;")
         box_r.addWidget(self.lbl_rank_crop, alignment=Qt.AlignCenter)
@@ -105,7 +126,7 @@ class CardEditDialog(QDialog):
         lbl_s_title.setStyleSheet("font-size: 10px; color: #8E8E93;")
         box_s.addWidget(lbl_s_title, alignment=Qt.AlignCenter)
         self.lbl_suit_crop = QLabel()
-        self.lbl_suit_crop.setFixedSize(48, 48)
+        self.lbl_suit_crop.setFixedSize(44, 44)
         self.lbl_suit_crop.setAlignment(Qt.AlignCenter)
         self.lbl_suit_crop.setStyleSheet("background-color: #1C1C1E; border: 1px solid #3A3A3C; border-radius: 4px;")
         box_s.addWidget(self.lbl_suit_crop, alignment=Qt.AlignCenter)
@@ -142,16 +163,24 @@ class CardEditDialog(QDialog):
         self.lbl_rank_suit_conf.setStyleSheet("font-size: 11px; font-weight: 600; color: #64D2FF;")
         layout_pred.addWidget(self.lbl_rank_suit_conf)
 
-        # Source / Status
-        status_text = "Nguồn: Thuật toán nhận diện"
+        # Source / Status & Similarity
+        sim_pct = int((self.detected_card.matched_similarity if self.detected_card else 0) * 100)
+        status_text = f"Trạng thái: {self.detected_card.recognition_status if self.detected_card else 'CONFIRMED'}"
         if self.detected_card and self.detected_card.is_reference_match:
-            status_text = "Nguồn: Thư viện ảnh mẫu đã xác nhận"
+            status_text += f" | Mẫu khớp ({sim_pct}%)"
         elif self.detected_card and self.detected_card.is_uncertain:
-            status_text = f"Nghi ngờ: {self.detected_card.uncertain_reason or 'Cần xác nhận'}"
+            status_text += f" | {self.detected_card.uncertain_reason or 'Cần xác nhận'}"
         self.lbl_source = QLabel(status_text)
         self.lbl_source.setWordWrap(True)
         self.lbl_source.setStyleSheet("font-size: 11px; color: #8E8E93;")
         layout_pred.addWidget(self.lbl_source)
+
+        # Bounding box info
+        if self.detected_card:
+            x, y, w, h = self.detected_card.bbox
+            lbl_bbox = QLabel(f"Vị trí: ({x}, {y}) | Size: {w}x{h}")
+            lbl_bbox.setStyleSheet("font-size: 10px; color: #8E8E93;")
+            layout_pred.addWidget(lbl_bbox)
 
         # Alternative Candidates
         if self.detected_card and self.detected_card.alternative_candidates:
@@ -332,34 +361,52 @@ class CardEditDialog(QDialog):
         main_layout.addLayout(right_panel, stretch=5)
 
     def _render_crop_images(self) -> None:
-        """Renders raw card crop, rank crop, and suit crop into QLabels."""
+        """Renders raw card crop, matched reference crop, rank crop, and suit crop into QLabels."""
         if self.detected_card is None:
             self.lbl_crop_img.setText("Không có ảnh")
+            self.lbl_matched_ref_img.setText("-")
             self.lbl_rank_crop.setText("-")
             self.lbl_suit_crop.setText("-")
             return
 
         # 1. Full card crop
         if self.detected_card.raw_crop is not None and self.detected_card.raw_crop.size > 0:
-            self._set_pixmap_to_label(self.lbl_crop_img, self.detected_card.raw_crop, 126, 174)
+            self._set_pixmap_to_label(self.lbl_crop_img, self.detected_card.raw_crop, 88, 124)
         else:
             self.lbl_crop_img.setText("Không có ảnh crop")
 
-        # 2. Rank crop
+        # 2. Matched reference sample
+        ref_img = None
+        if self.detected_card.reference_crop is not None and self.detected_card.reference_crop.size > 0:
+            ref_img = self.detected_card.reference_crop
+        elif self.detected_card.matched_reference_id and self.reference_library:
+            ref_img = self.reference_library.get_reference_image(self.detected_card.matched_reference_id)
+        elif self.selected_card and self.reference_library:
+            code = f"{self.selected_card.rank.char}{self.selected_card.suit.char.upper()}"
+            refs = self.reference_library.get_references_for_card(code)
+            if refs:
+                ref_img = self.reference_library.get_reference_image(refs[0].id)
+
+        if ref_img is not None:
+            self._set_pixmap_to_label(self.lbl_matched_ref_img, ref_img, 88, 124)
+        else:
+            self.lbl_matched_ref_img.setText("Chưa có mẫu")
+
+        # 3. Rank crop
         if self.detected_card.rank_crop is not None and self.detected_card.rank_crop.size > 0:
-            self._set_pixmap_to_label(self.lbl_rank_crop, self.detected_card.rank_crop, 44, 44)
+            self._set_pixmap_to_label(self.lbl_rank_crop, self.detected_card.rank_crop, 42, 42)
         elif self.detected_card.raw_crop is not None and self.detected_card.raw_crop.size > 0:
             norm = cv2.resize(self.detected_card.raw_crop, (120, 168))
-            self._set_pixmap_to_label(self.lbl_rank_crop, norm[8:48, 8:44], 44, 44)
+            self._set_pixmap_to_label(self.lbl_rank_crop, norm[8:48, 8:44], 42, 42)
         else:
             self.lbl_rank_crop.setText("-")
 
-        # 3. Suit crop
+        # 4. Suit crop
         if self.detected_card.suit_crop is not None and self.detected_card.suit_crop.size > 0:
-            self._set_pixmap_to_label(self.lbl_suit_crop, self.detected_card.suit_crop, 44, 44)
+            self._set_pixmap_to_label(self.lbl_suit_crop, self.detected_card.suit_crop, 42, 42)
         elif self.detected_card.raw_crop is not None and self.detected_card.raw_crop.size > 0:
             norm = cv2.resize(self.detected_card.raw_crop, (120, 168))
-            self._set_pixmap_to_label(self.lbl_suit_crop, norm[46:82, 8:44], 44, 44)
+            self._set_pixmap_to_label(self.lbl_suit_crop, norm[46:82, 8:44], 42, 42)
         else:
             self.lbl_suit_crop.setText("-")
 

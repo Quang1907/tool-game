@@ -15,7 +15,7 @@ from app.vision.template_engine import CardTemplateEngine
 
 @dataclass
 class DetectedCard:
-    """Represents a card recognized by Computer Vision with independent rank/suit confidences."""
+    """Represents a card recognized by Computer Vision with independent detection and rank/suit confidences."""
     card: Optional[Card]
     confidence: float
     bbox: Tuple[int, int, int, int]
@@ -31,6 +31,15 @@ class DetectedCard:
     uncertain_reason: str = ""
     alternative_candidates: List[Tuple[str, float]] = field(default_factory=list)
     matched_reference_id: Optional[str] = None
+    matched_similarity: float = 0.0
+    reference_crop: Optional[np.ndarray] = None
+    detection_id: str = "card_000"
+    polygon: List[Tuple[int, int]] = field(default_factory=list)
+    detection_confidence: float = 1.0
+    detection_status: str = "CONFIRMED"
+    is_overlapping: bool = False
+    is_partially_occluded: bool = False
+    recognition_status: str = "CONFIRMED"
 
     @property
     def display_str(self) -> str:
@@ -59,20 +68,28 @@ class DetectedCard:
 
     def to_dict(self) -> dict:
         return {
+            "detection_id": self.detection_id,
             "card_code": self.card_code,
             "rank": self.rank_char,
             "suit": self.suit_char,
+            "detection_confidence": round(self.detection_confidence, 4),
             "rank_confidence": round(self.rank_confidence, 4),
             "suit_confidence": round(self.suit_confidence, 4),
             "overall_confidence": round(self.overall_confidence, 4),
             "confidence": round(self.confidence, 4),
+            "detection_status": self.detection_status,
+            "recognition_status": self.recognition_status,
             "bbox": list(self.bbox),
+            "polygon": [list(pt) for pt in self.polygon],
+            "is_overlapping": self.is_overlapping,
+            "is_partially_occluded": self.is_partially_occluded,
             "is_verified": self.is_verified,
             "is_reference_match": self.is_reference_match,
             "is_uncertain": self.is_uncertain,
             "uncertain_reason": self.uncertain_reason,
             "alternative_candidates": self.alternative_candidates,
             "matched_reference_id": self.matched_reference_id,
+            "matched_similarity": round(self.matched_similarity, 4),
         }
 
 
@@ -118,6 +135,17 @@ class CardRecognizer:
 
     def recognize_crop(self, crop: CardCrop) -> DetectedCard:
         """Classifies an individual card crop by decoupling Rank and Suit recognition."""
+        if crop.image is None or crop.image.size == 0 or crop.bbox[2] < 10 or crop.bbox[3] < 10:
+            return DetectedCard(
+                card=None,
+                confidence=0.0,
+                bbox=crop.bbox,
+                raw_crop=np.zeros((168, 120, 3), dtype=np.uint8),
+                recognition_status="CROP_FAILED",
+                uncertain_reason="Crop ảnh rỗng hoặc không hợp lệ",
+                is_uncertain=True,
+            )
+
         norm_img = crop.image
         if crop.rank_crop is not None and crop.rank_crop.size > 0:
             rank_crop = crop.rank_crop
@@ -148,7 +176,7 @@ class CardRecognizer:
             corner_crop=crop.corner_crop,
             rank_crop=rank_crop,
             suit_crop=suit_crop,
-            min_confidence=0.60,
+            min_confidence=0.55,
         )
         ref_rank, ref_rank_score, _ = self.reference_library.match_rank_glyph(q_rank_glyph)
         ref_suit, ref_suit_score, _ = self.reference_library.match_suit_glyph(q_suit_glyph, is_red=is_red)
@@ -157,59 +185,73 @@ class CardRecognizer:
         algo_rank, algo_rank_conf = self._template_engine.match_rank(cv2.cvtColor(rank_crop, cv2.COLOR_BGR2GRAY))
         algo_suit, algo_suit_conf = self._template_engine.match_suit(cv2.cvtColor(suit_crop, cv2.COLOR_BGR2GRAY), is_red=is_red)
 
-        # 5. Fuse Rank prediction
-        if ref_rank is not None and ref_rank_score >= 0.70:
-            final_rank = ref_rank
-            final_rank_conf = ref_rank_score
-        elif ref_rank is not None and ref_rank == algo_rank:
-            final_rank = ref_rank
-            final_rank_conf = min(0.99, (ref_rank_score + algo_rank_conf) / 2.0 + 0.10)
-        elif ref_rank is not None and ref_rank_score > algo_rank_conf:
-            final_rank = ref_rank
-            final_rank_conf = ref_rank_score
-        else:
-            final_rank = algo_rank
-            final_rank_conf = algo_rank_conf
-
-        # 6. Fuse Suit prediction
-        if ref_suit is not None and ref_suit_score >= 0.70:
-            final_suit = ref_suit
-            final_suit_conf = ref_suit_score
-        elif ref_suit is not None and ref_suit == algo_suit:
-            final_suit = ref_suit
-            final_suit_conf = min(0.99, (ref_suit_score + algo_suit_conf) / 2.0 + 0.10)
-        elif ref_suit is not None and ref_suit_score > algo_suit_conf:
-            final_suit = ref_suit
-            final_suit_conf = ref_suit_score
-        else:
-            final_suit = algo_suit
-            final_suit_conf = algo_suit_conf
-
-        # 7. Cross-check with Full Reference Match
+        # 5. Fuse Predictions with Priority for Confirmed Reference Library
         is_ref_match = False
         matched_ref_id = None
+        matched_similarity = 0.0
+        ref_crop_img = None
         alternatives: List[Tuple[str, float]] = []
+
+        final_rank = None
+        final_suit = None
+        final_rank_conf = 0.0
+        final_suit_conf = 0.0
 
         if ref_match is not None:
             alternatives = list(ref_match.alternative_candidates)
-            if ref_match.is_confident:
-                matched_ref_id = ref_match.reference_id
-                if ref_match.card is not None and ref_match.card.rank == final_rank and ref_match.card.suit == final_suit:
-                    final_rank_conf = min(0.99, max(final_rank_conf, ref_match.rank_score, 0.92))
-                    final_suit_conf = min(0.99, max(final_suit_conf, ref_match.suit_score, 0.92))
-                    is_ref_match = True
-                elif ref_match.score >= 0.86 and ref_match.card is not None:
-                    final_rank = ref_match.card.rank
-                    final_suit = ref_match.card.suit
-                    final_rank_conf = max(final_rank_conf, ref_match.rank_score)
-                    final_suit_conf = max(final_suit_conf, ref_match.suit_score)
-                    is_ref_match = True
+            matched_similarity = ref_match.score
 
-        if not is_ref_match and ref_rank is not None and ref_suit is not None:
-            if ref_rank == final_rank and ref_suit == final_suit and ref_rank_score >= 0.78 and ref_suit_score >= 0.78:
+            # Priority 1: Ground-truth user-confirmed reference match (score >= 0.65)
+            if ref_match.score >= 0.65 and ref_match.card is not None:
+                final_rank = ref_match.card.rank
+                final_suit = ref_match.card.suit
+                final_rank_conf = max(0.85, ref_match.rank_score, ref_match.score)
+                final_suit_conf = max(0.85, ref_match.suit_score, ref_match.score)
                 is_ref_match = True
+                matched_ref_id = ref_match.reference_id
+                ref_crop_img = self.reference_library.get_reference_image(ref_match.reference_id)
+            elif ref_match.is_confident and ref_match.card is not None:
+                final_rank = ref_match.card.rank
+                final_suit = ref_match.card.suit
+                final_rank_conf = max(0.88, ref_match.rank_score)
+                final_suit_conf = max(0.88, ref_match.suit_score)
+                is_ref_match = True
+                matched_ref_id = ref_match.reference_id
+                ref_crop_img = self.reference_library.get_reference_image(ref_match.reference_id)
 
-        # 8. Compute overall confidence and uncertainty
+        if not is_ref_match:
+            # Fallback to independent rank & suit fusion
+            if ref_rank is not None and ref_rank_score >= 0.68:
+                final_rank = ref_rank
+                final_rank_conf = ref_rank_score
+            elif ref_rank is not None and ref_rank == algo_rank:
+                final_rank = ref_rank
+                final_rank_conf = min(0.99, (ref_rank_score + algo_rank_conf) / 2.0 + 0.10)
+            elif ref_rank is not None and ref_rank_score > algo_rank_conf:
+                final_rank = ref_rank
+                final_rank_conf = ref_rank_score
+            else:
+                final_rank = algo_rank
+                final_rank_conf = algo_rank_conf
+
+            if ref_suit is not None and ref_suit_score >= 0.68:
+                final_suit = ref_suit
+                final_suit_conf = ref_suit_score
+            elif ref_suit is not None and ref_suit == algo_suit:
+                final_suit = ref_suit
+                final_suit_conf = min(0.99, (ref_suit_score + algo_suit_conf) / 2.0 + 0.10)
+            elif ref_suit is not None and ref_suit_score > algo_suit_conf:
+                final_suit = ref_suit
+                final_suit_conf = ref_suit_score
+            else:
+                final_suit = algo_suit
+                final_suit_conf = algo_suit_conf
+
+            if ref_rank is not None and ref_suit is not None:
+                if ref_rank == final_rank and ref_suit == final_suit and ref_rank_score >= 0.70 and ref_suit_score >= 0.70:
+                    is_ref_match = True
+
+        # 6. Compute overall confidence and uncertainty
         card = Card(final_rank, final_suit) if (final_rank and final_suit) else None
         overall_conf = round(final_rank_conf * 0.50 + final_suit_conf * 0.50, 4)
 
@@ -227,6 +269,34 @@ class CardRecognizer:
             else:
                 uncertain_reason = f"Độ tin cậy tổng thể thấp ({int(overall_conf*100)}%)"
 
+        has_saved_ref = False
+        if card:
+            code = f"{card.rank.char}{card.suit.char.upper()}"
+            has_saved_ref = len(self.reference_library.get_references_for_card(code)) > 0
+
+        det_id = crop.detection.detection_id if crop.detection else "card_000"
+        det_conf = crop.detection.detection_confidence if crop.detection else 1.0
+        poly = list(crop.detection.polygon) if (crop.detection and crop.detection.polygon) else []
+        is_overlap = crop.detection.is_overlapping if crop.detection else False
+        is_occluded = crop.detection.is_partially_occluded if crop.detection else False
+        det_status = crop.detection.detection_status if crop.detection else "CONFIRMED"
+
+        # Separate 6 distinct diagnostic statuses (Part D)
+        if det_status == "DETECTION_FAILED":
+            recog_status = "DETECTION_FAILED"
+        elif det_status == "INVALID_CARD_BOUNDS":
+            recog_status = "INVALID_CARD_BOUNDS"
+        elif card is None:
+            recog_status = "RECOGNITION_FAILED"
+        elif is_uncertain:
+            recog_status = "UNCERTAIN"
+        elif has_saved_ref and not is_ref_match:
+            recog_status = "REFERENCE_NOT_USED"
+            if not uncertain_reason:
+                uncertain_reason = f"Ảnh mẫu có trong thư viện ({int(matched_similarity*100)}%) nhưng chưa được sử dụng"
+        else:
+            recog_status = "CONFIRMED"
+
         return DetectedCard(
             card=card,
             confidence=overall_conf,
@@ -243,6 +313,15 @@ class CardRecognizer:
             uncertain_reason=uncertain_reason,
             alternative_candidates=alternatives,
             matched_reference_id=matched_ref_id,
+            matched_similarity=round(matched_similarity, 4),
+            reference_crop=ref_crop_img,
+            detection_id=det_id,
+            polygon=poly,
+            detection_confidence=round(det_conf, 4),
+            detection_status=det_status,
+            is_overlapping=is_overlap,
+            is_partially_occluded=is_occluded,
+            recognition_status=recog_status,
         )
 
     def _predict_template_raw(self, crop: CardCrop) -> Tuple[Optional[Card], float]:

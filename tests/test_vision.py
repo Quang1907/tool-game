@@ -63,23 +63,110 @@ class TestCardTemplateEngine:
         assert conf > 0.50
 
 
-class TestCardDetectorSlicing:
-    def test_slice_horizontal_13_cards(self):
-        img = np.zeros((150, 1300, 3), dtype=np.uint8)  # Wide 13-card bar
-        detector = CardDetector()
-        crops = detector.detect_cards(img)
-        assert len(crops) == 13
-        for idx, crop in enumerate(crops):
-            assert crop.image.shape == (
-                ImagePreprocessor.CARD_TARGET_HEIGHT,
-                ImagePreprocessor.CARD_TARGET_WIDTH,
-                3,
-            )
+class TestCardDetector:
+    def test_detect_single_card_random_position(self):
+        """CardDetector discovers an upright card placed at an arbitrary position without fixed grids."""
+        # Dark green poker table
+        table = np.zeros((300, 400, 3), dtype=np.uint8)
+        table[:, :] = (20, 80, 20)
 
-    def test_slice_three_rows_grid(self):
-        img = np.zeros((300, 500, 3), dtype=np.uint8)
-        bboxes = CardDetector.slice_three_rows_grid(img)
-        assert len(bboxes) == 13  # 3 + 5 + 5 = 13
+        # Place white card at arbitrary position (60, 45) with size 80x112 (aspect ~0.71)
+        cx, cy, cw, ch = 60, 45, 80, 112
+        table[cy : cy + ch, cx : cx + cw] = (245, 245, 245)
+        # Rank glyph mark in top-left
+        table[cy + 4 : cy + 24, cx + 4 : cx + 20] = (20, 20, 20)
+
+        detector = CardDetector()
+        crops, debug = detector.detect_card_objects(table)
+
+        assert len(crops) == 1
+        assert debug.total_detected == 1
+        det = crops[0].detection
+        assert det is not None
+        assert abs(det.bbox[0] - cx) <= 5
+        assert abs(det.bbox[1] - cy) <= 5
+        assert abs(det.bbox[2] - cw) <= 5
+        assert abs(det.bbox[3] - ch) <= 5
+        assert det.detection_confidence >= 0.85
+        assert crops[0].image.shape == (
+            ImagePreprocessor.CARD_TARGET_HEIGHT,
+            ImagePreprocessor.CARD_TARGET_WIDTH,
+            3,
+        )
+
+    def test_detect_multiple_scattered_cards(self):
+        """CardDetector discovers multiple cards scattered at unaligned, random positions."""
+        table = np.zeros((400, 600, 3), dtype=np.uint8)
+        table[:, :] = (30, 70, 30)
+
+        # 3 scattered cards
+        positions = [(40, 50, 70, 98), (220, 180, 70, 98), (440, 80, 70, 98)]
+        for x, y, w, h in positions:
+            table[y : y + h, x : x + w] = (240, 240, 240)
+            table[y + 4 : y + 20, x + 4 : x + 16] = (10, 10, 10)
+
+        detector = CardDetector()
+        crops = detector.detect_cards(table)
+
+        assert len(crops) == 3
+        # Ensure detected coordinates correspond to actual scattered positions
+        detected_xs = sorted([c.bbox[0] for c in crops])
+        assert abs(detected_xs[0] - 40) <= 6
+        assert abs(detected_xs[1] - 220) <= 6
+        assert abs(detected_xs[2] - 440) <= 6
+
+    def test_reject_non_card_ui_elements(self):
+        """CardDetector rejects saturated game buttons and dark empty slots."""
+        table = np.zeros((300, 500, 3), dtype=np.uint8)
+        table[:, :] = (25, 75, 25)
+
+        # Real card
+        table[40:152, 40:120] = (245, 245, 245)
+        table[45:65, 45:60] = (10, 10, 10)
+
+        # Orange UI Button ("Xếp xong" - highly saturated orange, low whiteness)
+        table[40:90, 200:320] = (0, 140, 255)  # BGR orange: High Saturation
+
+        # Dark empty slot outline
+        table[40:152, 360:440] = (35, 45, 35)
+
+        detector = CardDetector()
+        crops, debug = detector.detect_card_objects(table)
+
+        assert len(crops) == 1
+        assert crops[0].bbox[0] < 150  # Only the real card is detected!
+        assert debug.total_rejected >= 1
+        assert "ui_button" in debug.rejection_breakdown
+
+    def test_dissect_overlapping_cards(self):
+        """CardDetector dissects cascaded overlapping cards using vertical edge transitions."""
+        table = np.zeros((200, 400, 3), dtype=np.uint8)
+        table[:, :] = (20, 70, 20)
+
+        # Cascaded cluster of 3 cards overlapping horizontally:
+        # Card 1: x=50, Card 2: x=90, Card 3: x=130 (width=70, height=100)
+        h, w = 100, 70
+        y = 40
+        # Draw base
+        table[y : y + h, 50 : 50 + w] = (235, 235, 235)
+        table[y + 4 : y + 20, 54 : 68] = (10, 10, 10)
+
+        # Overlapping card 2
+        table[y : y + h, 90 : 90 + w] = (245, 245, 245)
+        table[y : y + h, 90 : 92] = (150, 150, 150)  # Edge shadow
+        table[y + 4 : y + 20, 94 : 108] = (10, 10, 10)
+
+        # Overlapping card 3
+        table[y : y + h, 130 : 130 + w] = (250, 250, 250)
+        table[y : y + h, 130 : 132] = (150, 150, 150)  # Edge shadow
+        table[y + 4 : y + 20, 134 : 148] = (10, 10, 10)
+
+        detector = CardDetector()
+        crops, _ = detector.detect_card_objects(table)
+
+        assert len(crops) >= 2
+        for crop in crops:
+            assert crop.detection.is_overlapping is True
 
 
 class TestScreenCaptureMultiMonitor:

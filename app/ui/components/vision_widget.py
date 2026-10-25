@@ -23,6 +23,7 @@ from app.services.vision_service import VisionWorker
 from app.ui.components.card_edit_dialog import CardEditDialog
 from app.ui.components.card_reference_manager import CardReferenceManagerDialog
 from app.ui.components.card_widget import CardWidget
+from app.ui.components.vision_debug_dialog import VisionDebugDialog
 from app.ui.components.zoomable_viewer import ZoomableImageViewer
 from app.vision.card_detector import CardDetector
 from app.vision.card_recognizer import CardRecognizer, DetectedCard
@@ -43,6 +44,7 @@ class VisionWidget(QWidget):
         self.recognizer = CardRecognizer(reference_library=self.reference_library)
         self.current_image: Optional[np.ndarray] = None
         self.detected_cards: List[DetectedCard] = []
+        self.last_debug_info: Optional[object] = None
 
         self._vision_thread: Optional[QThread] = None
         self._vision_worker: Optional[VisionWorker] = None
@@ -125,15 +127,10 @@ class VisionWidget(QWidget):
 
         viewer_tools.addStretch()
 
-        # Detection Mode Selector
-        viewer_tools.addWidget(QLabel("Chế độ quét:"))
-        self.combo_mode = QComboBox()
-        self.combo_mode.addItems([
-            "Tự động tìm khung bài (Auto)",
-            "Cắt đều 13 lá ngang (13-Card Row)",
-            "Cắt lưới 3 chi 3-5-5 (3-Row Grid)",
-        ])
-        viewer_tools.addWidget(self.combo_mode)
+        # Automatic Detection Badge (No fixed grid)
+        lbl_badge = QLabel("🎯 Tự động phát hiện lá bài thực tế (Không chia khung)")
+        lbl_badge.setStyleSheet("color: #30D158; font-weight: 600; padding: 4px 10px; background: rgba(48,209,88,0.12); border-radius: 6px;")
+        viewer_tools.addWidget(lbl_badge)
 
         self.btn_recognize = QPushButton("🔍 Nhận diện lá bài")
         self.btn_recognize.setFixedHeight(30)
@@ -143,10 +140,25 @@ class VisionWidget(QWidget):
 
         layout_viewer.addLayout(viewer_tools)
 
-        # Zoomable Image Viewer
+        # Zoomable Image Viewer with Detection Overlay
         self.image_viewer = ZoomableImageViewer()
         self.image_viewer.setMinimumHeight(280)
+        self.image_viewer.box_clicked.connect(self._open_card_editor)
         layout_viewer.addWidget(self.image_viewer)
+
+        # Detection Debug Information Panel with 4-step diagnostic button
+        debug_row = QHBoxLayout()
+        self.lbl_debug_info = QLabel("Chưa quét đối tượng.")
+        self.lbl_debug_info.setStyleSheet("color: #8E8E93; font-size: 11px; padding: 2px 4px;")
+        debug_row.addWidget(self.lbl_debug_info, stretch=1)
+
+        self.btn_debug_dialog = QPushButton("🔬 Xem Debug 4 Bước (Chẩn đoán)", objectName="SecondaryBtn")
+        self.btn_debug_dialog.setToolTip("Mở bảng kiểm tra chi tiết: 1.Ảnh gốc, 2.Overlay, 3.Crop từng lá, 4.Đối chiếu ảnh mẫu")
+        self.btn_debug_dialog.setEnabled(False)
+        self.btn_debug_dialog.clicked.connect(self._open_debug_dialog)
+        debug_row.addWidget(self.btn_debug_dialog)
+
+        layout_viewer.addLayout(debug_row)
 
         main_layout.addWidget(box_viewer)
 
@@ -271,11 +283,13 @@ class VisionWidget(QWidget):
     def _clear_image(self) -> None:
         self.current_image = None
         self.detected_cards.clear()
+        self.last_debug_info = None
         self.image_viewer._scene.clear()
         self.btn_recognize.setEnabled(False)
         self.btn_recapture.setEnabled(False)
         self.btn_clear_img.setEnabled(False)
         self.btn_confirm.setEnabled(False)
+        self.btn_debug_dialog.setEnabled(False)
         self._display_detected_cards()
         self.lbl_validation_msg.setText("Chưa có ảnh.")
 
@@ -283,17 +297,10 @@ class VisionWidget(QWidget):
         if self.current_image is None:
             return
 
-        mode_idx = self.combo_mode.currentIndex()
-        mode_str = "AUTO"
-        if mode_idx == 1:
-            mode_str = "STRIP_13"
-        elif mode_idx == 2:
-            mode_str = "GRID_3_5_5"
-
         self.btn_recognize.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-        self.lbl_validation_msg.setText("Đang chạy Computer Vision nhận diện bài...")
+        self.lbl_validation_msg.setText("Đang tự động phát hiện các lá bài bằng Computer Vision...")
 
         # Setup background thread
         self._vision_thread = QThread()
@@ -301,7 +308,7 @@ class VisionWidget(QWidget):
             image=self.current_image,
             detector=self.detector,
             recognizer=self.recognizer,
-            mode=mode_str,
+            mode="AUTO",
         )
         self._vision_worker.moveToThread(self._vision_thread)
 
@@ -316,7 +323,7 @@ class VisionWidget(QWidget):
         self.progress_bar.setValue(current)
         self.lbl_validation_msg.setText(status)
 
-    def _on_vision_finished(self, detected_cards: List[DetectedCard]) -> None:
+    def _on_vision_finished(self, detected_cards: List[DetectedCard], debug_info: Optional[object] = None) -> None:
         if self._vision_thread and self._vision_thread.isRunning():
             self._vision_thread.quit()
             self._vision_thread.wait()
@@ -324,8 +331,16 @@ class VisionWidget(QWidget):
         self.progress_bar.setVisible(False)
         self.btn_recognize.setEnabled(True)
         self.detected_cards = detected_cards
+        self.last_debug_info = debug_info
 
-        # Update viewer bounding boxes
+        # Update diagnostic debug panel
+        if debug_info and hasattr(debug_info, "summary_str"):
+            self.lbl_debug_info.setText(debug_info.summary_str())
+            self.btn_debug_dialog.setEnabled(True)
+        else:
+            self.btn_debug_dialog.setEnabled(False)
+
+        # Update viewer bounding boxes and polygons
         if self.current_image is not None:
             self.image_viewer.set_image(self.current_image, detected_cards)
 
@@ -409,7 +424,7 @@ class VisionWidget(QWidget):
             parent=self,
         )
         if dialog.exec() and dialog.selected_card:
-            # Update detected card
+            # Update detected card with verified values while preserving detection geometry
             self.detected_cards[index] = DetectedCard(
                 card=dialog.selected_card,
                 confidence=1.0,  # Manually verified by user
@@ -418,6 +433,17 @@ class VisionWidget(QWidget):
                 is_verified=True,
                 is_reference_match=dialog.saved_as_reference or det.is_reference_match,
                 is_uncertain=False,
+                rank_confidence=1.0,
+                suit_confidence=1.0,
+                overall_confidence=1.0,
+                rank_crop=det.rank_crop,
+                suit_crop=det.suit_crop,
+                detection_id=det.detection_id,
+                polygon=det.polygon,
+                detection_confidence=det.detection_confidence,
+                is_overlapping=det.is_overlapping,
+                is_partially_occluded=det.is_partially_occluded,
+                recognition_status="CONFIRMED",
             )
             # If user saved reference, reload library cache immediately
             if dialog.saved_as_reference:
@@ -453,8 +479,26 @@ class VisionWidget(QWidget):
         )
         dialog.exec()
 
+    def _open_debug_dialog(self) -> None:
+        """Opens VisionDebugDialog to inspect the 4 diagnostic steps."""
+        if self.current_image is None or self.last_debug_info is None:
+            QMessageBox.information(
+                self,
+                "Chưa có dữ liệu nhận diện",
+                "Vui lòng thực hiện 'Nhận diện lá bài' trước khi xem chẩn đoán 4 bước.",
+            )
+            return
+
+        dialog = VisionDebugDialog(
+            original_frame=self.current_image,
+            debug_info=self.last_debug_info,
+            detected_cards=self.detected_cards,
+            reference_library=self.reference_library,
+            parent=self,
+        )
+        dialog.exec()
+
     def _on_confirm_cards(self) -> None:
         cards = [d.card for d in self.detected_cards if d.card is not None]
         if len(cards) == 13:
-            self.cards_confirmed.emit(cards)
             self.cards_confirmed.emit(cards)

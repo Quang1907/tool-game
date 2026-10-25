@@ -24,6 +24,7 @@ from app.ui.components.history_widget import HistoryWidget
 from app.ui.components.simulator_widget import SimulatorWidget
 from app.ui.components.solver_widget import SolverWidget
 from app.ui.components.vision_widget import VisionWidget
+from app.ui.components.multi_window_widget import MultiWindowWidget
 from app.ui.styles import MACOS_DARK_THEME
 
 
@@ -90,6 +91,10 @@ class MainWindow(QMainWindow):
         # 5. History Tab
         self.tab_history = HistoryWidget(repository=self.repository)
         self.tabs.addTab(self.tab_history, "5. Lịch sử phân tích")
+
+        # 6. Multi-Window Game Bot Tab
+        self.tab_multi_bot = MultiWindowWidget()
+        self.tabs.addTab(self.tab_multi_bot, "6. Bot 3 Cửa Sổ")
 
         main_layout.addWidget(self.tabs)
 

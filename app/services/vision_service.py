@@ -5,7 +5,8 @@ from typing import List, Optional
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
-from app.vision.card_detector import CardCrop, CardDetector
+import time
+from app.vision.card_detector import CardCrop, CardDetector, DetectionDebugInfo
 from app.vision.card_recognizer import CardRecognizer, DetectedCard
 
 
@@ -13,7 +14,7 @@ class VisionWorker(QObject):
     """Worker object executing card detection and recognition in background thread."""
 
     progress = Signal(int, int, str)       # current, total, status
-    finished = Signal(list)                # list[DetectedCard]
+    finished = Signal(list, object)        # list[DetectedCard], DetectionDebugInfo
     error = Signal(str)                    # error message
 
     def __init__(
@@ -21,7 +22,7 @@ class VisionWorker(QObject):
         image: np.ndarray,
         detector: CardDetector,
         recognizer: CardRecognizer,
-        mode: str = "AUTO",                # "AUTO", "CONTOURS", "STRIP_13", "GRID_3_5_5"
+        mode: str = "AUTO",
     ) -> None:
         super().__init__()
         self.image = image
@@ -32,37 +33,40 @@ class VisionWorker(QObject):
     def run(self) -> None:
         """Executes detection and recognition."""
         try:
-            self.progress.emit(10, 100, "Đang định vị vị trí các lá bài...")
+            self.progress.emit(10, 100, "Đang quét và định vị hình ảnh các lá bài...")
 
-            # 1. Detection
-            if self.mode == "STRIP_13":
-                bboxes = self.detector.slice_horizontal_row(self.image, card_count=13)
-                crops = self.detector._build_card_crops(self.image, bboxes)
-            elif self.mode == "GRID_3_5_5":
-                bboxes = self.detector.slice_three_rows_grid(self.image)
-                crops = self.detector._build_card_crops(self.image, bboxes)
-            else:
-                crops = self.detector.detect_cards(self.image)
+            # 1. Real Computer Vision Card Detection
+            crops, debug_info = self.detector.detect_card_objects(self.image)
 
             if not crops:
-                self.finished.emit([])
+                self.progress.emit(100, 100, "Không tìm thấy lá bài nào trong vùng tìm kiếm.")
+                self.finished.emit([], debug_info)
                 return
 
             total_crops = len(crops)
-            self.progress.emit(30, 100, f"Đã tìm thấy {total_crops} lá bài. Đang nhận diện...")
+            self.progress.emit(30, 100, f"Đã tìm thấy {total_crops} lá bài thực tế. Đang nhận diện rank và suit...")
 
-            # 2. Recognition
+            # 2. Card Recognition
+            start_recog = time.perf_counter()
             detected_cards: List[DetectedCard] = []
             for idx, crop in enumerate(crops):
                 det = self.recognizer.recognize_crop(crop)
                 detected_cards.append(det)
 
+                if det.is_uncertain:
+                    debug_info.uncertain_count += 1
+                else:
+                    debug_info.confirmed_count += 1
+
                 pct = 30 + int(((idx + 1) / total_crops) * 70)
                 tag = det.card.unicode_name if det.card else "?"
                 self.progress.emit(pct, 100, f"Đang nhận diện lá {idx + 1}/{total_crops}: {tag}...")
 
-            self.progress.emit(100, 100, f"Hoàn thành nhận diện {len(detected_cards)} lá!")
-            self.finished.emit(detected_cards)
+            debug_info.recognition_time_ms = (time.perf_counter() - start_recog) * 1000.0
+
+            self.progress.emit(100, 100, f"Hoàn thành: {len(detected_cards)} lá ({debug_info.confirmed_count} xác nhận, {debug_info.uncertain_count} nghi ngờ)")
+            self.finished.emit(detected_cards, debug_info)
 
         except Exception as e:
             self.error.emit(str(e))
+

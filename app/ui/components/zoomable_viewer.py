@@ -56,22 +56,68 @@ class ZoomableImageViewer(QGraphicsView):
         self.fit_in_view()
 
     def _draw_bounding_boxes(self) -> None:
-        """Overlays detected card rectangles and text tags on top of image."""
-        font = QFont("SF Pro Text", 12, QFont.Bold)
+        """Overlays detected card polygons/rectangles, IDs, and dual confidence badges."""
+        font = QFont(".AppleSystemUIFont", 11, QFont.Bold)
 
         for idx, det in enumerate(self._detected_cards):
             x, y, w, h = det.bbox
-            rect_item = self._scene.addRect(
-                x, y, w, h,
-                QPen(QColor("#30D158") if det.confidence >= 0.70 else QColor("#FF9F0A"), 2),
-                QColor(48, 209, 88, 30) if det.confidence >= 0.70 else QColor(255, 159, 10, 30),
-            )
 
-            # Label text
+            # Color coding based on status and confidence
+            if det.is_verified or det.is_reference_match:
+                border_color = QColor("#0A84FF")  # Apple Blue
+                fill_color = QColor(10, 132, 255, 35)
+            elif det.is_uncertain or det.confidence < 0.65:
+                border_color = QColor("#FF9F0A")  # Apple Orange
+                fill_color = QColor(255, 159, 10, 35)
+            else:
+                border_color = QColor("#30D158")  # Apple Green
+                fill_color = QColor(48, 209, 88, 35)
+
+            pen = QPen(border_color, 2)
+
+            # Draw 4-point polygon if available, else rectangle
+            if len(det.polygon) == 4:
+                from PySide6.QtGui import QPolygonF
+                from PySide6.QtCore import QPointF
+                poly_item = self._scene.addPolygon(
+                    QPolygonF([QPointF(pt[0], pt[1]) for pt in det.polygon]),
+                    pen,
+                    fill_color,
+                )
+            else:
+                self._scene.addRect(x, y, w, h, pen, fill_color)
+
+            # Build label text: [ID] CardName (det: X%, rec: Y%)
             tag_text = det.card.unicode_name if det.card else "?"
-            tag_item = self._scene.addSimpleText(f"#{idx+1} {tag_text}", font)
-            tag_item.setBrush(QColor("#FFFFFF"))
-            tag_item.setPos(x + 4, max(0, y - 20))
+            det_pct = int(det.detection_confidence * 100)
+            rec_pct = int(det.confidence * 100)
+            det_label = f"#{idx+1} {tag_text} (det:{det_pct}% rec:{rec_pct}%)"
+
+            # Background pill for badge readability
+            badge_bg = self._scene.addRect(
+                x, max(0, y - 22), max(110, w), 20,
+                QPen(Qt.NoPen),
+                QColor(20, 20, 20, 210),
+            )
+            badge_text = self._scene.addSimpleText(det_label, font)
+            badge_text.setBrush(border_color)
+            badge_text.setPos(x + 4, max(1, y - 20))
+
+    def mousePressEvent(self, event) -> None:
+        """Emits box_clicked with card index when user clicks on a detected card overlay."""
+        if event.button() == Qt.LeftButton:
+            scene_pos = self.mapToScene(event.pos())
+            sx, sy = scene_pos.x(), scene_pos.y()
+
+            # Check if clicked point is inside any detected card bbox
+            for idx, det in enumerate(self._detected_cards):
+                x, y, w, h = det.bbox
+                if x <= sx <= x + w and y <= sy <= y + h:
+                    self.box_clicked.emit(idx)
+                    event.accept()
+                    return
+
+        super().mousePressEvent(event)
 
     def fit_in_view(self) -> None:
         """Scales view to fit image within the current viewport."""

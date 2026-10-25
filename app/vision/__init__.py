@@ -2,7 +2,7 @@
 
 from app.vision.screen_capture import ScreenCapture, ScreenInfo
 from app.vision.image_preprocessor import ImagePreprocessor
-from app.vision.card_detector import CardDetector, CardCrop
+from app.vision.card_detector import CardDetector, CardCrop, CardDetection, DetectionDebugInfo, CardTracker
 from app.vision.template_engine import CardTemplateEngine
 from app.vision.card_recognizer import CardRecognizer, DetectedCard
 from app.vision.recognition_validator import RecognitionValidator, ValidationReport
@@ -11,6 +11,9 @@ from app.vision.card_reference_library import (
     CardReferenceLibrary,
     CardReferenceMatch,
 )
+from app.vision.roi_manager import ROIManager, WindowROI
+from app.vision.window_manager import WindowManager, WindowItem
+from app.vision.card_state import CardStateManager, WindowCardState
 
 __all__ = [
     "ScreenCapture",
@@ -18,6 +21,9 @@ __all__ = [
     "ImagePreprocessor",
     "CardDetector",
     "CardCrop",
+    "CardDetection",
+    "DetectionDebugInfo",
+    "CardTracker",
     "CardTemplateEngine",
     "CardRecognizer",
     "DetectedCard",
@@ -26,4 +32,10 @@ __all__ = [
     "CardReference",
     "CardReferenceLibrary",
     "CardReferenceMatch",
+    "ROIManager",
+    "WindowROI",
+    "WindowManager",
+    "WindowItem",
+    "CardStateManager",
+    "WindowCardState",
 ]

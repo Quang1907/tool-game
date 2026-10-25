@@ -23,7 +23,7 @@ class TestUIComponents:
     def test_main_window_initialization(self, qapp):
         window = MainWindow()
         assert window.windowTitle() == "Binh 13 Analyzer — macOS Professional Edition"
-        assert window.tabs.count() == 5
+        assert window.tabs.count() == 6
 
         # Check tabs exist
         assert "Nhập bài" in window.tabs.tabText(0)
@@ -31,6 +31,7 @@ class TestUIComponents:
         assert "Xếp bài" in window.tabs.tabText(2)
         assert "Mô phỏng" in window.tabs.tabText(3)
         assert "Lịch sử" in window.tabs.tabText(4)
+        assert "Bot 3 Cửa Sổ" in window.tabs.tabText(5)
 
     def test_workflow_card_selection_to_solving(self, qapp):
         window = MainWindow()

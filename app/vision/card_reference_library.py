@@ -29,17 +29,28 @@ class CardReference:
     image_hash: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def reference_id(self) -> str:
+        return self.id
+
+    @property
+    def active(self) -> bool:
+        return self.confirmed
+
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "reference_id": self.id,
             "id": self.id,
             "card_code": self.card_code,
             "rank": self.rank,
             "suit": self.suit,
             "image_path": self.image_path,
-            "source": self.source,
-            "confirmed": self.confirmed,
-            "created_at": self.created_at,
             "image_hash": self.image_hash,
+            "source": self.source,
+            "created_at": self.created_at,
+            "normalization_version": self.metadata.get("normalization_version", "v2"),
+            "active": self.confirmed,
+            "confirmed": self.confirmed,
             "metadata": self.metadata,
         }
 
@@ -55,6 +66,7 @@ class CardReferenceMatch:
     is_confident: bool = False
     rank_score: float = 0.0
     suit_score: float = 0.0
+    matched_image_path: str = ""
 
 
 @dataclass
@@ -71,6 +83,7 @@ class _CachedReference:
     suit_char: str
     is_red: bool
     dhash_int: int
+    image_path: str = ""
 
 
 class CardReferenceLibrary:
@@ -248,6 +261,8 @@ class CardReferenceLibrary:
         card_code = f"{card.rank.char}{card.suit.char.upper()}"
         image_hash = self.compute_dhash(image)
         metadata_dict = metadata or {}
+        metadata_dict.setdefault("normalization_version", "v2")
+        metadata_dict.setdefault("active", True)
 
         # 1. Deduplication check: Do not re-save if exact image hash exists for this card
         with self.db.get_connection() as conn:
@@ -360,6 +375,16 @@ class CardReferenceLibrary:
             row = cursor.fetchone()
             return self._row_to_reference(row) if row else None
 
+    def get_reference_image(self, ref_id: str) -> Optional[np.ndarray]:
+        """Loads and returns the BGR reference image for a given reference ID."""
+        ref = self.get_reference_by_id(ref_id)
+        if not ref or not ref.image_path:
+            return None
+        p = Path(ref.image_path)
+        if p.exists():
+            return cv2.imread(str(p))
+        return None
+
     def get_summary(self) -> Dict[str, Any]:
         """Returns statistical summary of reference samples in library."""
         with self.db.get_connection() as conn:
@@ -449,6 +474,7 @@ class CardReferenceLibrary:
             suit_char=card.suit.char.upper(),
             is_red=is_red,
             dhash_int=dhash_int,
+            image_path=ref.image_path,
         )
         self._cache.append(cached)
 
@@ -503,7 +529,7 @@ class CardReferenceLibrary:
         has_suit_glyph = cv2.countNonZero(q_suit_glyph) >= 10
 
         # 2. Score candidates against all cached samples
-        card_best_scores: Dict[str, Tuple[float, Card, str, float, float]] = {}  # card_code -> (score, Card, ref_id, r_score, s_score)
+        card_best_scores: Dict[str, Tuple[float, Card, str, float, float, str]] = {}  # card_code -> (score, Card, ref_id, r_score, s_score, image_path)
 
         for ref in self._cache:
             color_penalty = 1.0 if query_is_red == ref.is_red else 0.50
@@ -522,9 +548,15 @@ class CardReferenceLibrary:
             else:
                 score_suit = 0.50
 
-            # Normalized Cross Correlation on corner (focuses on rank & suit glyphs)
-            res_corner = cv2.matchTemplate(q_corner_gray, ref.corner_gray, cv2.TM_CCOEFF_NORMED)
-            score_corner = max(0.0, float(res_corner[0][0]))
+            # Multi-scale Normalized Cross Correlation on corner (focuses on rank & suit glyphs)
+            score_corner = max(0.0, float(cv2.matchTemplate(q_corner_gray, ref.corner_gray, cv2.TM_CCOEFF_NORMED)[0][0]))
+            for sc in (0.92, 1.08):
+                cw_s = max(8, int(ref.corner_gray.shape[1] * sc))
+                ch_s = max(8, int(ref.corner_gray.shape[0] * sc))
+                if q_corner_gray.shape[0] >= ch_s and q_corner_gray.shape[1] >= cw_s:
+                    ref_sc = cv2.resize(ref.corner_gray, (cw_s, ch_s))
+                    sc_res = cv2.matchTemplate(q_corner_gray, ref_sc, cv2.TM_CCOEFF_NORMED)
+                    score_corner = max(score_corner, float(np.max(sc_res)))
 
             # Normalized Cross Correlation on full card patch
             res_full = cv2.matchTemplate(q_full_gray, ref.full_gray, cv2.TM_CCOEFF_NORMED)
@@ -535,26 +567,26 @@ class CardReferenceLibrary:
             final_score = min(0.99, max(0.0, raw_score))
 
             if ref.card_code not in card_best_scores or final_score > card_best_scores[ref.card_code][0]:
-                card_best_scores[ref.card_code] = (final_score, ref.card, ref.ref_id, score_rank, score_suit)
+                card_best_scores[ref.card_code] = (final_score, ref.card, ref.ref_id, score_rank, score_suit, ref.image_path)
 
         if not card_best_scores:
             return None
 
         # 3. Rank candidates
         sorted_candidates = sorted(
-            [(code, data[0], data[1], data[2], data[3], data[4]) for code, data in card_best_scores.items()],
+            [(code, data[0], data[1], data[2], data[3], data[4], data[5]) for code, data in card_best_scores.items()],
             key=lambda x: x[1],
             reverse=True,
         )
 
-        top_code, top_score, top_card, top_ref_id, top_rank_score, top_suit_score = sorted_candidates[0]
+        top_code, top_score, top_card, top_ref_id, top_rank_score, top_suit_score, top_img_path = sorted_candidates[0]
 
         if top_score < min_confidence:
             return None
 
-        # Confidence criteria: score >= 0.80 and clear margin over runner-up
+        # Confidence criteria: score >= 0.80 or (score >= 0.68 with margin >= 0.03 over runner-up)
         second_score = sorted_candidates[1][1] if len(sorted_candidates) > 1 else 0.0
-        is_confident = (top_score >= 0.80) and ((top_score - second_score) >= 0.05)
+        is_confident = (top_score >= 0.80) or ((top_score >= 0.68) and ((top_score - second_score) >= 0.03))
 
         alternatives = [(c[0], round(c[1], 3)) for c in sorted_candidates[1:4]]
 
@@ -567,6 +599,7 @@ class CardReferenceLibrary:
             is_confident=is_confident,
             rank_score=round(top_rank_score, 4),
             suit_score=round(top_suit_score, 4),
+            matched_image_path=top_img_path,
         )
 
     def _row_to_reference(self, row: Any) -> CardReference:
