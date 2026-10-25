@@ -1,6 +1,7 @@
 """Unit tests for Computer Vision, Template Matching, Screen Capture, and Recognition Validation."""
 
 from pathlib import Path
+import cv2
 import numpy as np
 import pytest
 from PIL import Image, ImageDraw, ImageFont
@@ -8,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 from app.core.card import Card, Rank, Suit
 from app.vision.card_detector import CardCrop, CardDetector
 from app.vision.card_recognizer import CardRecognizer, DetectedCard
+from app.vision.card_reference_library import CardReferenceLibrary
 from app.vision.image_preprocessor import ImagePreprocessor
 from app.vision.recognition_validator import RecognitionValidator
 from app.vision.screen_capture import ScreenCapture
@@ -320,6 +322,9 @@ class TestCardReferenceLibrary:
             confidence=0.96,
             bbox=(10, 20, 80, 120),
             raw_crop=np.zeros((120, 80, 3), dtype=np.uint8),
+            rank_confidence=0.98,
+            suit_confidence=0.94,
+            overall_confidence=0.96,
             is_verified=True,
             is_reference_match=True,
             is_uncertain=False,
@@ -329,9 +334,175 @@ class TestCardReferenceLibrary:
         assert d["card_code"] == "KH"
         assert d["rank"] == "K"
         assert d["suit"] == "H"
+        assert d["rank_confidence"] == 0.98
+        assert d["suit_confidence"] == 0.94
+        assert d["overall_confidence"] == 0.96
         assert d["confidence"] == 0.96
         assert d["is_verified"] is True
         assert d["is_reference_match"] is True
         assert d["is_uncertain"] is False
         assert len(d["alternative_candidates"]) == 2
+
+
+class TestRealCardRecognition:
+    """Rigorous tests executed on actual in-game card screenshots from tests/fixtures/real_samples/."""
+
+    FIXTURE_DIR = Path(__file__).parent / "fixtures" / "real_samples"
+
+    @pytest.fixture
+    def test_lib(self, tmp_path):
+        from app.database.db import DatabaseManager
+        from app.vision.card_reference_library import CardReferenceLibrary
+        db = DatabaseManager(db_path=tmp_path / "real_test.db")
+        return CardReferenceLibrary(db_manager=db, storage_dir=tmp_path / "real_refs")
+
+    def _load_fixture(self, prefix: str) -> np.ndarray:
+        files = list(self.FIXTURE_DIR.glob(f"{prefix}*.png"))
+        assert len(files) > 0, f"Missing fixture starting with {prefix}"
+        img = cv2.imread(str(files[0]))
+        assert img is not None and img.size > 0
+        return img
+
+    def test_real_fixtures_exist(self):
+        fixtures = list(self.FIXTURE_DIR.glob("*.png"))
+        assert len(fixtures) >= 8, f"Expected at least 8 real sample images, found {len(fixtures)}"
+
+    def test_rank_and_suit_isolated_crops(self):
+        """CardDetector generates isolated rank_crop and suit_crop without middle illustrations."""
+        detector = CardDetector()
+        img_jc = self._load_fixture("JC")
+
+        crops = detector._build_card_crops(img_jc, [(0, 0, 120, 168)])
+        assert len(crops) == 1
+        crop = crops[0]
+
+        assert crop.rank_crop is not None
+        assert crop.suit_crop is not None
+        assert crop.rank_crop.shape == (40, 36, 3)
+        assert crop.suit_crop.shape == (36, 36, 3)
+
+    def test_extract_primary_glyph_clean_and_noise_free(self):
+        """extract_primary_glyph cleans green selection glow and extracts primary character."""
+        for code in ["4H", "5D", "6D", "7D", "JC", "JH", "KC", "KD"]:
+            img = self._load_fixture(code)
+            r_crop = img[8:48, 8:44]
+            s_crop = img[46:82, 8:44]
+
+            r_glyph = CardReferenceLibrary.extract_primary_glyph(r_crop, (24, 36))
+            s_glyph = CardReferenceLibrary.extract_primary_glyph(s_crop, (28, 28))
+
+            assert r_glyph.shape == (36, 24)
+            assert s_glyph.shape == (28, 28)
+            assert cv2.countNonZero(r_glyph) >= 20, f"Rank glyph for {code} is empty"
+            assert cv2.countNonZero(s_glyph) >= 20, f"Suit glyph for {code} is empty"
+
+    def test_cross_learning_suit_c_from_jc_to_kc(self, test_lib):
+        """Confirming JC provides suit glyph ♣, allowing instant identification of KC suit."""
+        img_jc = self._load_fixture("JC")
+        img_kc = self._load_fixture("KC")
+
+        card_jc = Card(Rank.JACK, Suit.CLUBS)
+        test_lib.add_reference(image=img_jc, card=card_jc)
+
+        kc_suit_glyph = test_lib.extract_primary_glyph(img_kc[46:82, 8:44], (28, 28))
+        pred_suit, suit_score, _ = test_lib.match_suit_glyph(kc_suit_glyph, is_red=False)
+
+        assert pred_suit == Suit.CLUBS
+        assert suit_score >= 0.85, f"Expected high suit correlation, got {suit_score}"
+
+    def test_cross_learning_rank_k_from_kd_to_kc(self, test_lib):
+        """Confirming KD provides rank glyph K, allowing instant identification of KC rank."""
+        img_kd = self._load_fixture("KD")
+        img_kc = self._load_fixture("KC")
+
+        card_kd = Card(Rank.KING, Suit.DIAMONDS)
+        test_lib.add_reference(image=img_kd, card=card_kd)
+
+        kc_rank_glyph = test_lib.extract_primary_glyph(img_kc[8:48, 8:44], (24, 36))
+        pred_rank, rank_score, _ = test_lib.match_rank_glyph(kc_rank_glyph)
+
+        assert pred_rank == Rank.KING
+        assert rank_score >= 0.88, f"Expected high rank correlation, got {rank_score}"
+
+    def test_distinguish_jack_and_king_glyphs(self):
+        """Rank J and Rank K have near-zero correlation and cannot be confused."""
+        img_jc = self._load_fixture("JC")
+        img_kc = self._load_fixture("KC")
+
+        j_glyph = CardReferenceLibrary.extract_primary_glyph(img_jc[8:48, 8:44], (24, 36))
+        k_glyph = CardReferenceLibrary.extract_primary_glyph(img_kc[8:48, 8:44], (24, 36))
+
+        res = cv2.matchTemplate(j_glyph, k_glyph, cv2.TM_CCOEFF_NORMED)
+        cross_score = float(res[0][0])
+        assert cross_score < 0.10, f"Rank J and K should have low correlation, got {cross_score}"
+
+    def test_distinguish_heart_and_diamond_suits(self):
+        """Diamonds (♦) and Hearts (♥) are distinguished by symbol geometry despite both being red."""
+        img_4h = self._load_fixture("4H")
+        img_5d = self._load_fixture("5D")
+
+        h_glyph = CardReferenceLibrary.extract_primary_glyph(img_4h[46:82, 8:44], (28, 28))
+        d_glyph = CardReferenceLibrary.extract_primary_glyph(img_5d[46:82, 8:44], (28, 28))
+
+        # Cross correlation between H and D
+        res_hd = cv2.matchTemplate(h_glyph, d_glyph, cv2.TM_CCOEFF_NORMED)
+        score_hd = float(res_hd[0][0])
+
+        # Self correlation of D
+        img_6d = self._load_fixture("6D")
+        d2_glyph = CardReferenceLibrary.extract_primary_glyph(img_6d[46:82, 8:44], (28, 28))
+        res_dd = cv2.matchTemplate(d_glyph, d2_glyph, cv2.TM_CCOEFF_NORMED)
+        score_dd = float(res_dd[0][0])
+
+        assert score_dd >= 0.95, f"Expected same suit correlation >= 0.95, got {score_dd}"
+        assert (score_dd - score_hd) >= 0.35, "Clear separation margin between ♦ and ♥"
+
+    def test_real_sample_leave_one_out_matching(self, test_lib):
+        """Given one real 7D sample, accurately recognizes a second real 7D sample."""
+        files_7d = sorted(self.FIXTURE_DIR.glob("7D*.png"))
+        assert len(files_7d) >= 2, "Expected 2 samples of 7D"
+
+        img_sample1 = cv2.imread(str(files_7d[0]))
+        img_sample2 = cv2.imread(str(files_7d[1]))
+
+        card_7d = Card(Rank.SEVEN, Suit.DIAMONDS)
+        test_lib.add_reference(image=img_sample1, card=card_7d)
+
+        recognizer = CardRecognizer(reference_library=test_lib)
+        crop2 = CardCrop(
+            bbox=(10, 10, 120, 168),
+            image=img_sample2,
+            corner_crop=img_sample2[0:70, 0:50],
+            rank_crop=img_sample2[8:48, 8:44],
+            suit_crop=img_sample2[46:82, 8:44],
+        )
+
+        detected = recognizer.recognize_crop(crop2)
+        assert detected.card == card_7d
+        assert detected.card_code == "7D"
+        assert detected.rank_char == "7"
+        assert detected.suit_char == "D"
+        assert detected.rank_confidence >= 0.85
+        assert detected.suit_confidence >= 0.85
+        assert detected.overall_confidence >= 0.85
+        assert detected.is_uncertain is False
+        assert detected.is_reference_match is True
+
+    def test_uncertain_flag_on_low_confidence_crop(self, test_lib):
+        """When an unlearned, heavily corrupted or black crop is tested, is_uncertain is set."""
+        recognizer = CardRecognizer(reference_library=test_lib)
+        corrupted = np.full((168, 120, 3), 40, dtype=np.uint8)  # Dark noisy image
+
+        crop = CardCrop(
+            bbox=(0, 0, 120, 168),
+            image=corrupted,
+            corner_crop=corrupted[0:70, 0:50],
+            rank_crop=corrupted[8:48, 8:44],
+            suit_crop=corrupted[46:82, 8:44],
+        )
+
+        detected = recognizer.recognize_crop(crop)
+        assert detected.is_uncertain is True
+        assert len(detected.uncertain_reason) > 0
+
 

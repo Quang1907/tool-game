@@ -1,6 +1,5 @@
-"""Card Confirmation and Correction Dialog with image crop preview, reference library saving, and 52-card selector."""
-
 from __future__ import annotations
+from pathlib import Path
 from typing import Optional
 import cv2
 import numpy as np
@@ -66,7 +65,7 @@ class CardEditDialog(QDialog):
         main_layout.setSpacing(14)
 
         # =====================================================================
-        # LEFT PANEL: Crop Image, Prediction Breakdown & Alternatives
+        # LEFT PANEL: Crop Image, Rank/Suit Crops, Prediction Breakdown & Alternatives
         # =====================================================================
         left_panel = QVBoxLayout()
         left_panel.setSpacing(8)
@@ -75,15 +74,45 @@ class CardEditDialog(QDialog):
         lbl_crop_title.setStyleSheet("font-weight: 700; color: #0A84FF; font-size: 13px;")
         left_panel.addWidget(lbl_crop_title)
 
-        # Card crop image viewer
+        # Card crop image viewer (Full card)
         self.lbl_crop_img = QLabel()
         self.lbl_crop_img.setAlignment(Qt.AlignCenter)
-        self.lbl_crop_img.setFixedSize(140, 196)
+        self.lbl_crop_img.setFixedSize(130, 180)
         self.lbl_crop_img.setStyleSheet(
-            "background-color: #1C1C1E; border: 2px solid #3A3A3C; border-radius: 8px; padding: 4px;"
+            "background-color: #1C1C1E; border: 2px solid #3A3A3C; border-radius: 8px; padding: 2px;"
         )
-        self._render_crop_image()
         left_panel.addWidget(self.lbl_crop_img, alignment=Qt.AlignCenter)
+
+        # Dedicated Rank Crop and Suit Crop previews
+        row_crops = QHBoxLayout()
+        row_crops.setSpacing(8)
+
+        box_r = QVBoxLayout()
+        box_r.setSpacing(2)
+        lbl_r_title = QLabel("Crop Rank")
+        lbl_r_title.setStyleSheet("font-size: 10px; color: #8E8E93;")
+        box_r.addWidget(lbl_r_title, alignment=Qt.AlignCenter)
+        self.lbl_rank_crop = QLabel()
+        self.lbl_rank_crop.setFixedSize(48, 48)
+        self.lbl_rank_crop.setAlignment(Qt.AlignCenter)
+        self.lbl_rank_crop.setStyleSheet("background-color: #1C1C1E; border: 1px solid #3A3A3C; border-radius: 4px;")
+        box_r.addWidget(self.lbl_rank_crop, alignment=Qt.AlignCenter)
+        row_crops.addLayout(box_r)
+
+        box_s = QVBoxLayout()
+        box_s.setSpacing(2)
+        lbl_s_title = QLabel("Crop Suit")
+        lbl_s_title.setStyleSheet("font-size: 10px; color: #8E8E93;")
+        box_s.addWidget(lbl_s_title, alignment=Qt.AlignCenter)
+        self.lbl_suit_crop = QLabel()
+        self.lbl_suit_crop.setFixedSize(48, 48)
+        self.lbl_suit_crop.setAlignment(Qt.AlignCenter)
+        self.lbl_suit_crop.setStyleSheet("background-color: #1C1C1E; border: 1px solid #3A3A3C; border-radius: 4px;")
+        box_s.addWidget(self.lbl_suit_crop, alignment=Qt.AlignCenter)
+        row_crops.addLayout(box_s)
+
+        left_panel.addLayout(row_crops)
+        self._render_crop_images()
 
         # Prediction details box
         box_pred = QFrame()
@@ -103,6 +132,15 @@ class CardEditDialog(QDialog):
         color = "#30D158" if conf_pct >= 75 else ("#FF9F0A" if conf_pct >= 55 else "#FF453A")
         self.lbl_pred_badge.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {color};")
         layout_pred.addWidget(self.lbl_pred_badge)
+
+        # Detailed Rank and Suit Confidence
+        r_conf = int((self.detected_card.rank_confidence if self.detected_card else 0) * 100)
+        s_conf = int((self.detected_card.suit_confidence if self.detected_card else 0) * 100)
+        r_char = self.detected_card.rank_char if self.detected_card else "?"
+        s_char = self.detected_card.suit_char if self.detected_card else "?"
+        self.lbl_rank_suit_conf = QLabel(f"Rank: {r_char} ({r_conf}%) | Suit: {s_char} ({s_conf}%)")
+        self.lbl_rank_suit_conf.setStyleSheet("font-size: 11px; font-weight: 600; color: #64D2FF;")
+        layout_pred.addWidget(self.lbl_rank_suit_conf)
 
         # Source / Status
         status_text = "Nguồn: Thuật toán nhận diện"
@@ -127,12 +165,18 @@ class CardEditDialog(QDialog):
             code = f"{self.selected_card.rank.char}{self.selected_card.suit.char.upper()}"
             existing_count = len(self.reference_library.get_references_for_card(code))
             self.lbl_ref_count = QLabel(f"Thư viện đã có: {existing_count} mẫu của {code}")
-            self.lbl_ref_count.setStyleSheet("font-size: 10px; color: #30D158;")
-            layout_pred.addWidget(self.lbl_ref_count)
+            self.lbl_ref_count.setStyleSheet("font-size: 10px; color: #30D158;" if existing_count else "font-size: 10px; color: #8E8E93;")
         else:
             self.lbl_ref_count = QLabel("Thư viện mẫu: 0 mẫu")
             self.lbl_ref_count.setStyleSheet("font-size: 10px; color: #8E8E93;")
-            layout_pred.addWidget(self.lbl_ref_count)
+        layout_pred.addWidget(self.lbl_ref_count)
+
+        # Button to view similar reference samples
+        self.btn_view_similar = QPushButton("🖼️ Xem ảnh mẫu tương tự", objectName="SecondaryBtn")
+        self.btn_view_similar.setFixedHeight(26)
+        self.btn_view_similar.setStyleSheet("font-size: 10px; padding: 2px 6px;")
+        self.btn_view_similar.clicked.connect(self._on_view_similar_clicked)
+        layout_pred.addWidget(self.btn_view_similar)
 
         left_panel.addWidget(box_pred)
         left_panel.addStretch()
@@ -140,10 +184,10 @@ class CardEditDialog(QDialog):
         main_layout.addLayout(left_panel, stretch=2)
 
         # =====================================================================
-        # RIGHT PANEL: 52-Card Grid Selector & Actions
+        # RIGHT PANEL: Independent Rank/Suit Pickers & 52-Card Grid Selector
         # =====================================================================
         right_panel = QVBoxLayout()
-        right_panel.setSpacing(10)
+        right_panel.setSpacing(8)
 
         # Header & Search
         header_layout = QHBoxLayout()
@@ -153,26 +197,73 @@ class CardEditDialog(QDialog):
 
         header_layout.addStretch()
 
+        self.lbl_selected_display = QLabel()
+        self.lbl_selected_display.setStyleSheet("font-size: 13px; font-weight: 700; color: #0A84FF;")
+        self._update_selected_display()
+        header_layout.addWidget(self.lbl_selected_display)
+
         self.input_search = QLineEdit()
-        self.input_search.setPlaceholderText("Tìm nhanh (vd: AS, 10H)...")
-        self.input_search.setFixedWidth(150)
+        self.input_search.setPlaceholderText("Tìm (vd: AS, 10H)...")
+        self.input_search.setFixedWidth(130)
         self.input_search.textChanged.connect(self._on_search_text_changed)
         header_layout.addWidget(self.input_search)
 
         right_panel.addLayout(header_layout)
 
-        # 52 Cards Grid
+        # 1. Quick Rank Selector Row
+        rank_row = QHBoxLayout()
+        rank_row.setSpacing(2)
+        rank_title = QLabel("Rank:")
+        rank_title.setStyleSheet("font-size: 11px; font-weight: 600; color: #8E8E93; min-width: 32px;")
+        rank_row.addWidget(rank_title)
+
+        ranks_order = [
+            Rank.TWO, Rank.THREE, Rank.FOUR, Rank.FIVE, Rank.SIX,
+            Rank.SEVEN, Rank.EIGHT, Rank.NINE, Rank.TEN,
+            Rank.JACK, Rank.QUEEN, Rank.KING, Rank.ACE
+        ]
+        self._rank_buttons: dict[Rank, QPushButton] = {}
+        for r in ranks_order:
+            btn_r = QPushButton(r.char)
+            btn_r.setFixedSize(30, 28)
+            btn_r.setCursor(Qt.PointingHandCursor)
+            btn_r.clicked.connect(lambda _, rank_val=r: self._on_rank_button_clicked(rank_val))
+            self._rank_buttons[r] = btn_r
+            rank_row.addWidget(btn_r)
+        right_panel.addLayout(rank_row)
+
+        # 2. Quick Suit Selector Row
+        suit_row = QHBoxLayout()
+        suit_row.setSpacing(4)
+        suit_title = QLabel("Suit:")
+        suit_title.setStyleSheet("font-size: 11px; font-weight: 600; color: #8E8E93; min-width: 32px;")
+        suit_row.addWidget(suit_title)
+
+        suit_defs = [
+            (Suit.SPADES, "♠ Bích", "#FFFFFF"),
+            (Suit.CLUBS, "♣ Tép", "#FFFFFF"),
+            (Suit.DIAMONDS, "♦ Rô", "#FF453A"),
+            (Suit.HEARTS, "♥ Cơ", "#FF453A"),
+        ]
+        self._suit_buttons: dict[Suit, QPushButton] = {}
+        for s_val, s_name, s_color in suit_defs:
+            btn_s = QPushButton(s_name)
+            btn_s.setFixedHeight(28)
+            btn_s.setCursor(Qt.PointingHandCursor)
+            btn_s.setStyleSheet(f"font-weight: 700; color: {s_color}; padding: 0 8px;")
+            btn_s.clicked.connect(lambda _, suit_val=s_val: self._on_suit_button_clicked(suit_val))
+            self._suit_buttons[s_val] = btn_s
+            suit_row.addWidget(btn_s)
+        suit_row.addStretch()
+        right_panel.addLayout(suit_row)
+
+        # 3. 52 Cards Grid
         grid_widget = QWidget()
         grid = QGridLayout(grid_widget)
         grid.setSpacing(3)
         grid.setContentsMargins(0, 0, 0, 0)
 
         suits = [Suit.SPADES, Suit.CLUBS, Suit.DIAMONDS, Suit.HEARTS]
-        ranks = [
-            Rank.TWO, Rank.THREE, Rank.FOUR, Rank.FIVE, Rank.SIX,
-            Rank.SEVEN, Rank.EIGHT, Rank.NINE, Rank.TEN,
-            Rank.JACK, Rank.QUEEN, Rank.KING, Rank.ACE
-        ]
 
         for row_idx, suit in enumerate(suits):
             suit_lbl = QLabel(f"{suit.symbol}")
@@ -181,11 +272,11 @@ class CardEditDialog(QDialog):
             suit_lbl.setStyleSheet(f"font-weight: 700; font-size: 16px; color: {suit_color}; min-width: 18px;")
             grid.addWidget(suit_lbl, row_idx, 0, Qt.AlignCenter)
 
-            for col_idx, rank in enumerate(ranks):
+            for col_idx, rank in enumerate(ranks_order):
                 card = Card(rank, suit)
                 code = f"{rank.char}{suit.char.upper()}"
                 btn = QPushButton(f"{rank.char}")
-                btn.setFixedSize(34, 40)
+                btn.setFixedSize(34, 38)
                 btn.setCursor(Qt.PointingHandCursor)
                 btn.clicked.connect(lambda _, c=card: self._select_card(c))
 
@@ -196,7 +287,7 @@ class CardEditDialog(QDialog):
         right_panel.addWidget(grid_widget)
 
         # Action Buttons
-        right_panel.addSpacing(6)
+        right_panel.addSpacing(4)
         actions_layout = QHBoxLayout()
         actions_layout.setSpacing(8)
 
@@ -240,27 +331,119 @@ class CardEditDialog(QDialog):
 
         main_layout.addLayout(right_panel, stretch=5)
 
-    def _render_crop_image(self) -> None:
-        """Renders raw card crop into QLabel with proper aspect ratio."""
-        if self.detected_card is None or self.detected_card.raw_crop is None or self.detected_card.raw_crop.size == 0:
-            self.lbl_crop_img.setText("Không có ảnh crop")
+    def _render_crop_images(self) -> None:
+        """Renders raw card crop, rank crop, and suit crop into QLabels."""
+        if self.detected_card is None:
+            self.lbl_crop_img.setText("Không có ảnh")
+            self.lbl_rank_crop.setText("-")
+            self.lbl_suit_crop.setText("-")
             return
 
-        img = self.detected_card.raw_crop
+        # 1. Full card crop
+        if self.detected_card.raw_crop is not None and self.detected_card.raw_crop.size > 0:
+            self._set_pixmap_to_label(self.lbl_crop_img, self.detected_card.raw_crop, 126, 174)
+        else:
+            self.lbl_crop_img.setText("Không có ảnh crop")
+
+        # 2. Rank crop
+        if self.detected_card.rank_crop is not None and self.detected_card.rank_crop.size > 0:
+            self._set_pixmap_to_label(self.lbl_rank_crop, self.detected_card.rank_crop, 44, 44)
+        elif self.detected_card.raw_crop is not None and self.detected_card.raw_crop.size > 0:
+            norm = cv2.resize(self.detected_card.raw_crop, (120, 168))
+            self._set_pixmap_to_label(self.lbl_rank_crop, norm[8:48, 8:44], 44, 44)
+        else:
+            self.lbl_rank_crop.setText("-")
+
+        # 3. Suit crop
+        if self.detected_card.suit_crop is not None and self.detected_card.suit_crop.size > 0:
+            self._set_pixmap_to_label(self.lbl_suit_crop, self.detected_card.suit_crop, 44, 44)
+        elif self.detected_card.raw_crop is not None and self.detected_card.raw_crop.size > 0:
+            norm = cv2.resize(self.detected_card.raw_crop, (120, 168))
+            self._set_pixmap_to_label(self.lbl_suit_crop, norm[46:82, 8:44], 44, 44)
+        else:
+            self.lbl_suit_crop.setText("-")
+
+    @staticmethod
+    def _set_pixmap_to_label(label: QLabel, img: np.ndarray, max_w: int, max_h: int) -> None:
         h, w = img.shape[:2]
         if len(img.shape) == 2:
             rgb = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
         else:
             rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
         qimg = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888)
         pix = QPixmap.fromImage(qimg)
-        scaled = pix.scaled(132, 188, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.lbl_crop_img.setPixmap(scaled)
+        scaled = pix.scaled(max_w, max_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        label.setPixmap(scaled)
+
+    def _update_selected_display(self) -> None:
+        if self.selected_card:
+            code = f"{self.selected_card.rank.char}{self.selected_card.suit.char.upper()}"
+            self.lbl_selected_display.setText(f"Đang chọn: {self.selected_card.unicode_name} ({code})")
+        else:
+            self.lbl_selected_display.setText("Chưa chọn bài")
+
+    def _on_rank_button_clicked(self, rank: Rank) -> None:
+        """User selected a rank from the quick rank bar, preserving current suit."""
+        current_suit = self.selected_card.suit if self.selected_card else Suit.SPADES
+        self._select_card(Card(rank, current_suit))
+
+    def _on_suit_button_clicked(self, suit: Suit) -> None:
+        """User selected a suit from the quick suit bar, preserving current rank."""
+        current_rank = self.selected_card.rank if self.selected_card else Rank.ACE
+        self._select_card(Card(current_rank, suit))
+
+    def _on_view_similar_clicked(self) -> None:
+        """Displays saved reference samples for the currently selected card."""
+        if not self.selected_card or not self.reference_library:
+            return
+        code = f"{self.selected_card.rank.char}{self.selected_card.suit.char.upper()}"
+        refs = self.reference_library.get_references_for_card(code)
+        if not refs:
+            QMessageBox.information(self, "Ảnh mẫu tương tự", f"Chưa có ảnh mẫu nào trong thư viện cho lá {code}.")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Các ảnh mẫu đã lưu cho lá {self.selected_card.unicode_name} ({code})")
+        dlg.resize(460, 280)
+        vbox = QVBoxLayout(dlg)
+        vbox.addWidget(QLabel(f"Tìm thấy {len(refs)} ảnh mẫu đã xác nhận:"))
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        h_layout = QHBoxLayout(container)
+        h_layout.setSpacing(10)
+
+        for ref in refs:
+            p = Path(ref.image_path)
+            if not p.exists():
+                continue
+            r_img = cv2.imread(str(p))
+            if r_img is None:
+                continue
+            col = QVBoxLayout()
+            lbl = QLabel()
+            self._set_pixmap_to_label(lbl, r_img, 90, 126)
+            col.addWidget(lbl, alignment=Qt.AlignCenter)
+            col.addWidget(QLabel(f"Hash: {ref.image_hash[:6]}"), alignment=Qt.AlignCenter)
+            col.addWidget(QLabel(f"Ngày: {ref.created_at[:10]}"), alignment=Qt.AlignCenter)
+            w = QWidget()
+            w.setLayout(col)
+            h_layout.addWidget(w)
+
+        h_layout.addStretch()
+        scroll.setWidget(container)
+        vbox.addWidget(scroll)
+
+        btn_close = QPushButton("Đóng", objectName="SecondaryBtn")
+        btn_close.clicked.connect(dlg.accept)
+        vbox.addWidget(btn_close)
+        dlg.exec()
 
     def _select_card(self, card: Card) -> None:
-        """User clicked a card button in the 52-card selector."""
+        """User clicked a card button in the 52-card selector or rank/suit bars."""
         self.selected_card = card
+        self._update_selected_display()
         self._highlight_selected_card()
 
         # Update reference count label

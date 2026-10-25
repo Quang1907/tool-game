@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 
@@ -11,10 +11,12 @@ from app.vision.image_preprocessor import ImagePreprocessor
 
 @dataclass(frozen=True)
 class CardCrop:
-    """Cropped card image with bounding box coordinates."""
+    """Cropped card image with bounding box coordinates and dedicated rank/suit crops."""
     bbox: Tuple[int, int, int, int]  # (x, y, w, h)
     image: np.ndarray                # Rectified card patch (120x168)
     corner_crop: np.ndarray          # Top-left rank & suit corner area
+    rank_crop: Optional[np.ndarray] = None  # Dedicated crop of Rank glyph (~36x40)
+    suit_crop: Optional[np.ndarray] = None  # Dedicated crop of Suit symbol (~36x36)
 
 
 class CardDetector:
@@ -55,10 +57,7 @@ class CardDetector:
         img_h, img_w = table_image.shape[:2]
         bboxes: List[Tuple[int, int, int, int]] = []
 
-        # Standard overlapping card fan width
-        # Each card takes an equal step across the width
         step_x = img_w / float(card_count)
-        # Typical card width in a fan is about 1.5x to 2.0x the exposed step
         card_w = min(img_w, int(step_x * 1.6))
         card_h = img_h
 
@@ -117,6 +116,18 @@ class CardDetector:
             corner_w = int(ImagePreprocessor.CARD_TARGET_WIDTH * 0.42)
             corner_crop = rectified[0:corner_h, 0:corner_w]
 
-            crops.append(CardCrop(bbox=bbox, image=rectified, corner_crop=corner_crop))
+            # Separate dedicated crops for Rank and Suit
+            rank_crop = rectified[8:48, 8:44]
+            suit_crop = rectified[46:82, 8:44]
+
+            crops.append(
+                CardCrop(
+                    bbox=bbox,
+                    image=rectified,
+                    corner_crop=corner_crop,
+                    rank_crop=rank_crop,
+                    suit_crop=suit_crop,
+                )
+            )
 
         return crops

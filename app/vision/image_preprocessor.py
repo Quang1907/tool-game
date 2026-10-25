@@ -70,6 +70,33 @@ class ImagePreprocessor:
         return candidates
 
     @classmethod
+    def remove_green_border(cls, card_crop: np.ndarray) -> np.ndarray:
+        """Trims game selection green glowing borders from card edges if detected."""
+        if card_crop is None or card_crop.size == 0 or len(card_crop.shape) < 3:
+            return card_crop
+        ch, cw = card_crop.shape[:2]
+        if ch < 30 or cw < 30:
+            return card_crop
+
+        hsv = cv2.cvtColor(card_crop, cv2.COLOR_BGR2HSV)
+        is_green = (hsv[:, :, 0] >= 35) & (hsv[:, :, 0] <= 85) & (hsv[:, :, 1] > 50) & (hsv[:, :, 2] > 50)
+
+        t = min(6, ch // 12, cw // 12)
+        if t <= 0:
+            return card_crop
+
+        border_mask = np.zeros((ch, cw), dtype=bool)
+        border_mask[:t, :] = True
+        border_mask[-t:, :] = True
+        border_mask[:, :t] = True
+        border_mask[:, -t:] = True
+
+        if int(np.count_nonzero(is_green & border_mask)) > 80:
+            return card_crop[t : ch - t, t : cw - t]
+        return card_crop
+
+    @classmethod
     def rectify_card(cls, card_crop: np.ndarray) -> np.ndarray:
-        """Resizes a card patch to normalized target dimensions (120x168)."""
-        return cv2.resize(card_crop, (cls.CARD_TARGET_WIDTH, cls.CARD_TARGET_HEIGHT))
+        """Resizes a card patch to normalized target dimensions (120x168) with green border removal."""
+        cleaned = cls.remove_green_border(card_crop)
+        return cv2.resize(cleaned, (cls.CARD_TARGET_WIDTH, cls.CARD_TARGET_HEIGHT))

@@ -15,11 +15,16 @@ from app.vision.template_engine import CardTemplateEngine
 
 @dataclass
 class DetectedCard:
-    """Represents a card recognized by Computer Vision with confidence score."""
+    """Represents a card recognized by Computer Vision with independent rank/suit confidences."""
     card: Optional[Card]
     confidence: float
     bbox: Tuple[int, int, int, int]
     raw_crop: np.ndarray
+    rank_confidence: float = 0.0
+    suit_confidence: float = 0.0
+    overall_confidence: float = 0.0
+    rank_crop: Optional[np.ndarray] = None
+    suit_crop: Optional[np.ndarray] = None
     is_verified: bool = False
     is_reference_match: bool = False
     is_uncertain: bool = False
@@ -57,8 +62,11 @@ class DetectedCard:
             "card_code": self.card_code,
             "rank": self.rank_char,
             "suit": self.suit_char,
-            "bbox": list(self.bbox),
+            "rank_confidence": round(self.rank_confidence, 4),
+            "suit_confidence": round(self.suit_confidence, 4),
+            "overall_confidence": round(self.overall_confidence, 4),
             "confidence": round(self.confidence, 4),
+            "bbox": list(self.bbox),
             "is_verified": self.is_verified,
             "is_reference_match": self.is_reference_match,
             "is_uncertain": self.is_uncertain,
@@ -70,13 +78,14 @@ class DetectedCard:
 
 class CardRecognizer:
     """Recognizes playing cards from image crops using confirmed reference samples,
-    algorithmic template matching, and color classification.
+    independent rank/suit extraction, algorithmic template matching, and color classification.
 
     Architecture:
-    1. Confirmed Reference Library: prioritizes user-confirmed reference images of actual game cards.
-    2. Multi-scale Normalized Cross-Correlation Template Matching + HSV Color Segmentation.
-    3. Multi-source fusion and conflict resolution with uncertainty detection.
-    4. ONNX Neural Network Classifier (when `models/card_classifier.onnx` is present).
+    1. Independent Rank & Suit Extraction: Decouples rank glyph and suit symbol from middle illustration & UI banners.
+    2. Confirmed Reference Library: prioritizes user-confirmed reference images of actual game cards.
+    3. Multi-scale Normalized Cross-Correlation Template Matching + HSV Color Segmentation.
+    4. Multi-source fusion and conflict resolution with uncertainty detection.
+    5. ONNX Neural Network Classifier (when `models/card_classifier.onnx` is present).
     """
 
     def __init__(
@@ -108,134 +117,132 @@ class CardRecognizer:
         return self._is_onnx_loaded
 
     def recognize_crop(self, crop: CardCrop) -> DetectedCard:
-        """Classifies an individual card crop by fusing Reference Library with algorithmic analysis."""
-        # 1. Query Confirmed Reference Library
+        """Classifies an individual card crop by decoupling Rank and Suit recognition."""
+        norm_img = crop.image
+        if crop.rank_crop is not None and crop.rank_crop.size > 0:
+            rank_crop = crop.rank_crop
+        elif crop.corner_crop is not None and crop.corner_crop.size > 0:
+            split_y = int(crop.corner_crop.shape[0] * 0.55)
+            rank_crop = crop.corner_crop[0:split_y, :]
+        else:
+            rank_crop = norm_img[8:48, 8:44]
+
+        if crop.suit_crop is not None and crop.suit_crop.size > 0:
+            suit_crop = crop.suit_crop
+        elif crop.corner_crop is not None and crop.corner_crop.size > 0:
+            split_y = int(crop.corner_crop.shape[0] * 0.55)
+            suit_crop = crop.corner_crop[split_y:, :]
+        else:
+            suit_crop = norm_img[46:82, 8:44]
+
+        # 1. Color discrimination: Red vs Black
+        is_red = self.reference_library.check_image_is_red(suit_crop) or self.reference_library.check_image_is_red(rank_crop)
+
+        # 2. Extract isolated binary primary glyphs
+        q_rank_glyph = self.reference_library.extract_primary_glyph(rank_crop, (24, 36))
+        q_suit_glyph = self.reference_library.extract_primary_glyph(suit_crop, (28, 28))
+
+        # 3. Query Confirmed Reference Library
         ref_match = self.reference_library.match_crop(
             crop_image=crop.image,
             corner_crop=crop.corner_crop,
+            rank_crop=rank_crop,
+            suit_crop=suit_crop,
             min_confidence=0.60,
         )
+        ref_rank, ref_rank_score, _ = self.reference_library.match_rank_glyph(q_rank_glyph)
+        ref_suit, ref_suit_score, _ = self.reference_library.match_suit_glyph(q_suit_glyph, is_red=is_red)
 
-        # 2. Query Algorithmic Pipeline (ONNX or Synthetic Template Matching)
-        if self._is_onnx_loaded and self._onnx_session is not None:
-            algo_card, algo_conf = self._predict_onnx_raw(crop)
+        # 4. Query Algorithmic Pipeline
+        algo_rank, algo_rank_conf = self._template_engine.match_rank(cv2.cvtColor(rank_crop, cv2.COLOR_BGR2GRAY))
+        algo_suit, algo_suit_conf = self._template_engine.match_suit(cv2.cvtColor(suit_crop, cv2.COLOR_BGR2GRAY), is_red=is_red)
+
+        # 5. Fuse Rank prediction
+        if ref_rank is not None and ref_rank_score >= 0.70:
+            final_rank = ref_rank
+            final_rank_conf = ref_rank_score
+        elif ref_rank is not None and ref_rank == algo_rank:
+            final_rank = ref_rank
+            final_rank_conf = min(0.99, (ref_rank_score + algo_rank_conf) / 2.0 + 0.10)
+        elif ref_rank is not None and ref_rank_score > algo_rank_conf:
+            final_rank = ref_rank
+            final_rank_conf = ref_rank_score
         else:
-            algo_card, algo_conf = self._predict_template_raw(crop)
+            final_rank = algo_rank
+            final_rank_conf = algo_rank_conf
 
-        # 3. Multi-source Fusion & Conflict Resolution
-        return self._fuse_predictions(crop, ref_match, algo_card, algo_conf)
+        # 6. Fuse Suit prediction
+        if ref_suit is not None and ref_suit_score >= 0.70:
+            final_suit = ref_suit
+            final_suit_conf = ref_suit_score
+        elif ref_suit is not None and ref_suit == algo_suit:
+            final_suit = ref_suit
+            final_suit_conf = min(0.99, (ref_suit_score + algo_suit_conf) / 2.0 + 0.10)
+        elif ref_suit is not None and ref_suit_score > algo_suit_conf:
+            final_suit = ref_suit
+            final_suit_conf = ref_suit_score
+        else:
+            final_suit = algo_suit
+            final_suit_conf = algo_suit_conf
 
-    def _fuse_predictions(
-        self,
-        crop: CardCrop,
-        ref_match: Optional[CardReferenceMatch],
-        algo_card: Optional[Card],
-        algo_conf: float,
-    ) -> DetectedCard:
-        """Combines reference library match and algorithmic prediction safely."""
-        # Case A: Strong confident match from Confirmed Reference Library
-        if ref_match is not None and ref_match.is_confident:
-            if algo_card is not None and algo_card == ref_match.card:
-                # Perfect agreement
-                total_conf = min(0.99, max(ref_match.score, algo_conf) + 0.05)
-                return DetectedCard(
-                    card=ref_match.card,
-                    confidence=total_conf,
-                    bbox=crop.bbox,
-                    raw_crop=crop.image,
-                    is_verified=False,
-                    is_reference_match=True,
-                    is_uncertain=False,
-                    alternative_candidates=ref_match.alternative_candidates,
-                    matched_reference_id=ref_match.reference_id,
-                )
+        # 7. Cross-check with Full Reference Match
+        is_ref_match = False
+        matched_ref_id = None
+        alternatives: List[Tuple[str, float]] = []
+
+        if ref_match is not None:
+            alternatives = list(ref_match.alternative_candidates)
+            if ref_match.is_confident:
+                matched_ref_id = ref_match.reference_id
+                if ref_match.card is not None and ref_match.card.rank == final_rank and ref_match.card.suit == final_suit:
+                    final_rank_conf = min(0.99, max(final_rank_conf, ref_match.rank_score, 0.92))
+                    final_suit_conf = min(0.99, max(final_suit_conf, ref_match.suit_score, 0.92))
+                    is_ref_match = True
+                elif ref_match.score >= 0.86 and ref_match.card is not None:
+                    final_rank = ref_match.card.rank
+                    final_suit = ref_match.card.suit
+                    final_rank_conf = max(final_rank_conf, ref_match.rank_score)
+                    final_suit_conf = max(final_suit_conf, ref_match.suit_score)
+                    is_ref_match = True
+
+        if not is_ref_match and ref_rank is not None and ref_suit is not None:
+            if ref_rank == final_rank and ref_suit == final_suit and ref_rank_score >= 0.78 and ref_suit_score >= 0.78:
+                is_ref_match = True
+
+        # 8. Compute overall confidence and uncertainty
+        card = Card(final_rank, final_suit) if (final_rank and final_suit) else None
+        overall_conf = round(final_rank_conf * 0.50 + final_suit_conf * 0.50, 4)
+
+        is_uncertain = (card is None) or (overall_conf < 0.65) or (final_rank_conf < 0.60) or (final_suit_conf < 0.60)
+        uncertain_reason = ""
+        if is_uncertain:
+            if card is None:
+                uncertain_reason = "Không nhận diện được rank hoặc suit"
+            elif final_rank_conf < 0.60 and final_suit_conf < 0.60:
+                uncertain_reason = f"Độ tin cậy rank ({int(final_rank_conf*100)}%) và suit ({int(final_suit_conf*100)}%) đều thấp"
+            elif final_rank_conf < 0.60:
+                uncertain_reason = f"Độ tin cậy rank thấp ({int(final_rank_conf*100)}%)"
+            elif final_suit_conf < 0.60:
+                uncertain_reason = f"Độ tin cậy suit thấp ({int(final_suit_conf*100)}%)"
             else:
-                # Reference library has confirmed real samples from user
-                if ref_match.score >= 0.85:
-                    total_conf = ref_match.score * 0.95
-                    alts = list(ref_match.alternative_candidates)
-                    if algo_card:
-                        alts.insert(0, (f"{algo_card.rank.char}{algo_card.suit.char.upper()}", round(algo_conf, 3)))
-                    return DetectedCard(
-                        card=ref_match.card,
-                        confidence=total_conf,
-                        bbox=crop.bbox,
-                        raw_crop=crop.image,
-                        is_verified=False,
-                        is_reference_match=True,
-                        is_uncertain=False,
-                        alternative_candidates=alts,
-                        matched_reference_id=ref_match.reference_id,
-                    )
-                else:
-                    # Conflicting predictions and neither has overwhelming confidence
-                    alts = list(ref_match.alternative_candidates)
-                    if algo_card:
-                        alts.insert(0, (f"{algo_card.rank.char}{algo_card.suit.char.upper()}", round(algo_conf, 3)))
-                    best_card = ref_match.card if ref_match.score >= algo_conf else algo_card
-                    return DetectedCard(
-                        card=best_card,
-                        confidence=max(0.35, min(0.60, max(ref_match.score, algo_conf))),
-                        bbox=crop.bbox,
-                        raw_crop=crop.image,
-                        is_verified=False,
-                        is_reference_match=False,
-                        is_uncertain=True,
-                        uncertain_reason="Mâu thuẫn giữa ảnh mẫu và thuật toán",
-                        alternative_candidates=alts,
-                        matched_reference_id=ref_match.reference_id,
-                    )
-
-        # Case B: Moderate match from Reference Library (0.65 <= score < 0.82)
-        if ref_match is not None and ref_match.score >= 0.65:
-            if algo_card is not None and algo_card == ref_match.card:
-                # Corroborating evidence
-                total_conf = min(0.95, (ref_match.score + algo_conf) / 2.0 + 0.10)
-                return DetectedCard(
-                    card=ref_match.card,
-                    confidence=total_conf,
-                    bbox=crop.bbox,
-                    raw_crop=crop.image,
-                    is_verified=False,
-                    is_reference_match=True,
-                    is_uncertain=False,
-                    alternative_candidates=ref_match.alternative_candidates,
-                    matched_reference_id=ref_match.reference_id,
-                )
-            else:
-                # Moderate reference differs from algorithmic prediction
-                alts = [(ref_match.card_code, ref_match.score)]
-                if algo_card:
-                    alts.append((f"{algo_card.rank.char}{algo_card.suit.char.upper()}", round(algo_conf, 3)))
-                best_card = algo_card if algo_conf > ref_match.score else ref_match.card
-                return DetectedCard(
-                    card=best_card,
-                    confidence=max(0.35, min(0.60, max(ref_match.score, algo_conf))),
-                    bbox=crop.bbox,
-                    raw_crop=crop.image,
-                    is_verified=False,
-                    is_reference_match=False,
-                    is_uncertain=True,
-                    uncertain_reason="Ảnh mẫu và thuật toán cho kết quả khác nhau",
-                    alternative_candidates=alts,
-                    matched_reference_id=ref_match.reference_id,
-                )
-
-        # Case C: No reference samples or weak match -> Rely on Algorithmic Pipeline
-        is_uncertain = algo_card is None or algo_conf < 0.65
-        reason = "Độ tin cậy nhận diện thấp" if is_uncertain else ""
+                uncertain_reason = f"Độ tin cậy tổng thể thấp ({int(overall_conf*100)}%)"
 
         return DetectedCard(
-            card=algo_card,
-            confidence=algo_conf,
+            card=card,
+            confidence=overall_conf,
             bbox=crop.bbox,
             raw_crop=crop.image,
+            rank_confidence=round(final_rank_conf, 4),
+            suit_confidence=round(final_suit_conf, 4),
+            overall_confidence=overall_conf,
+            rank_crop=rank_crop,
+            suit_crop=suit_crop,
             is_verified=False,
-            is_reference_match=False,
+            is_reference_match=is_ref_match,
             is_uncertain=is_uncertain,
-            uncertain_reason=reason,
-            alternative_candidates=[] if ref_match is None else ref_match.alternative_candidates,
-            matched_reference_id=None,
+            uncertain_reason=uncertain_reason,
+            alternative_candidates=alternatives,
+            matched_reference_id=matched_ref_id,
         )
 
     def _predict_template_raw(self, crop: CardCrop) -> Tuple[Optional[Card], float]:
