@@ -260,8 +260,8 @@ class VisionDebugDialog(QDialog):
         top_bar.addWidget(QLabel("Chọn lá bài để kiểm tra ảnh crop:"))
         self.combo_crop_card = QComboBox()
         for idx, det in enumerate(self.detected_cards):
-            name = det.card.unicode_name if det.card else "Unknown"
-            self.combo_crop_card.addItem(f"#{idx+1} {det.detection_id}: {name} [{det.recognition_status}]", idx)
+            c_name = det.card.unicode_name if det.card else f"[{getattr(det, 'crop_status', 'NON_CARD_OBJECT')}]"
+            self.combo_crop_card.addItem(f"#{idx+1} {det.detection_id}: {c_name} [{det.recognition_status}]", idx)
         self.combo_crop_card.currentIndexChanged.connect(self._on_crop_card_selected)
         top_bar.addWidget(self.combo_crop_card)
         top_bar.addStretch()
@@ -298,7 +298,7 @@ class VisionDebugDialog(QDialog):
         cards_layout.addWidget(box_norm)
 
         # 3. Detection Confidence & Occlusion details
-        box_det_details = QGroupBox("3. Thông số Detection")
+        box_det_details = QGroupBox("3. Thông số Detection & Validation")
         layout_det_details = QVBoxLayout(box_det_details)
         self.lbl_tab3_det_info = QLabel()
         self.lbl_tab3_det_info.setStyleSheet("font-size: 12px; color: #FFFFFF; line-height: 1.6;")
@@ -324,9 +324,10 @@ class VisionDebugDialog(QDialog):
         # Raw crop
         if det.raw_crop is not None and det.raw_crop.size > 0:
             self._set_pixmap(self.lbl_tab3_raw, det.raw_crop, 136, 194)
-            self.lbl_tab3_raw_stats.setText(f"Bbox: ({x}, {y}, {w}, {h})\nKích thước crop: {w} x {h} px")
+            self.lbl_tab3_raw_stats.setText(f"Tọa độ gốc (x, y): ({x}, {y})\nKích thước crop: {w} x {h} px\nTrạng thái: {det.crop_status}")
         else:
             self.lbl_tab3_raw.setText("Không có ảnh")
+            self.lbl_tab3_raw_stats.setText(f"Tọa độ gốc: ({x}, {y}, {w}, {h})")
 
         # Normalized crop
         norm_img = cv2.resize(det.raw_crop, (120, 168)) if (det.raw_crop is not None and det.raw_crop.size > 0) else None
@@ -335,23 +336,30 @@ class VisionDebugDialog(QDialog):
         else:
             self.lbl_tab3_norm.setText("Không có ảnh")
 
-        tag = det.card.unicode_name if det.card else "Unknown"
         det_pct = int(det.detection_confidence * 100)
         rec_pct = int(det.confidence * 100)
         crop_st = getattr(det, "crop_status", "VALID_CARD_CROP")
         dup_grp = getattr(det, "duplicate_group", "") or "None"
         rej_r = getattr(det, "rejection_reason", "") or "None"
+
+        if det.card is not None:
+            tag = f"<span style='color:#30D158; font-weight:700;'>{det.card.unicode_name}</span>"
+        else:
+            tag = f"<span style='color:#FF453A; font-weight:700;'>[ĐỐI TƯỢNG KHÔNG PHẢI LÁ BÀI / {crop_st}]</span>"
+
         self.lbl_tab3_det_info.setText(
-            f"<b>Lá bài:</b> {tag}<br>"
+            f"<b>Đối tượng:</b> {tag}<br>"
             f"<b>Detection ID:</b> {det.detection_id}<br>"
+            f"<b>Tọa độ ảnh gốc (Bbox):</b> ({x}, {y}, {w}, {h})<br>"
+            f"<b>Kích thước crop:</b> {w} x {h} px<br>"
             f"<b>Detection Confidence:</b> {det_pct}%<br>"
             f"<b>Recognition Confidence:</b> {rec_pct}%<br>"
-            f"<b>Crop Status:</b> {crop_st}<br>"
+            f"<b>Crop Validation Status:</b> {crop_st}<br>"
             f"<b>Chồng lấp (Overlap):</b> {'Có' if det.is_overlapping else 'Không'}<br>"
             f"<b>Bị che khuất (Occluded):</b> {'Có' if det.is_partially_occluded else 'Không'}<br>"
             f"<b>Nhóm trùng:</b> {dup_grp}<br>"
-            f"<b>Lý do loại (nếu có):</b> {rej_r}<br>"
-            f"<b>Trạng thái:</b> {det.recognition_status}"
+            f"<b>Lý do từ chối (Rejection Reason):</b> {rej_r}<br>"
+            f"<b>Trạng thái nhận diện:</b> {det.recognition_status}"
         )
 
     # =========================================================================
@@ -365,11 +373,11 @@ class VisionDebugDialog(QDialog):
 
         # Top selector
         top_bar = QHBoxLayout()
-        top_bar.addWidget(QLabel("Chọn lá bài để xem chi tiết đối soát ảnh mẫu:"))
+        top_bar.addWidget(QLabel("Chọn đối tượng để xem chi tiết đối soát ảnh mẫu:"))
         self.combo_rec_card = QComboBox()
         for idx, det in enumerate(self.detected_cards):
-            name = det.card.unicode_name if det.card else "Unknown"
-            self.combo_rec_card.addItem(f"#{idx+1} {det.detection_id}: {name} ({int(det.confidence*100)}%)", idx)
+            c_name = det.card.unicode_name if det.card else f"[{getattr(det, 'crop_status', 'NON_CARD_OBJECT')}]"
+            self.combo_rec_card.addItem(f"#{idx+1} {det.detection_id}: {c_name} ({int(det.confidence*100)}%)", idx)
         self.combo_rec_card.currentIndexChanged.connect(self._on_rec_card_selected)
         top_bar.addWidget(self.combo_rec_card)
         top_bar.addStretch()
@@ -454,20 +462,38 @@ class VisionDebugDialog(QDialog):
         if not (0 <= idx < len(self.detected_cards)):
             return
         det = self.detected_cards[idx]
+        crop_st = getattr(det, "crop_status", "VALID_CARD_CROP")
+        is_non_card = det.card is None or crop_st in ("NON_CARD_OBJECT", "INVALID_CARD_CROP", "MISSING_RANK_REGION", "MISSING_SUIT_REGION")
 
         # 1. Rank Crop
         if det.rank_crop is not None and det.rank_crop.size > 0:
+            rh, rw = det.rank_crop.shape[:2]
             self._set_pixmap(self.lbl_tab4_rank, det.rank_crop, 76, 76)
+            if is_non_card:
+                self.lbl_tab4_rank_score.setText(f"Rank ({rw}x{rh}): Không hợp lệ")
+                self.lbl_tab4_rank_score.setStyleSheet("font-size: 11px; color: #FF453A; font-weight: 600;")
+            else:
+                self.lbl_tab4_rank_score.setText(f"Rank ({rw}x{rh}): {int(det.rank_confidence*100)}%")
+                self.lbl_tab4_rank_score.setStyleSheet("font-size: 11px; color: #64D2FF; font-weight: 600;")
         else:
-            self.lbl_tab4_rank.setText("Chưa có")
-        self.lbl_tab4_rank_score.setText(f"Rank Conf: {int(det.rank_confidence*100)}%")
+            self.lbl_tab4_rank.setText("Không có")
+            self.lbl_tab4_rank_score.setText("Rank: Không có")
+            self.lbl_tab4_rank_score.setStyleSheet("font-size: 11px; color: #8E8E93;")
 
         # 2. Suit Crop
         if det.suit_crop is not None and det.suit_crop.size > 0:
+            sh, sw = det.suit_crop.shape[:2]
             self._set_pixmap(self.lbl_tab4_suit, det.suit_crop, 76, 76)
+            if is_non_card:
+                self.lbl_tab4_suit_score.setText(f"Suit ({sw}x{sh}): Không hợp lệ")
+                self.lbl_tab4_suit_score.setStyleSheet("font-size: 11px; color: #FF453A; font-weight: 600;")
+            else:
+                self.lbl_tab4_suit_score.setText(f"Suit ({sw}x{sh}): {int(det.suit_confidence*100)}%")
+                self.lbl_tab4_suit_score.setStyleSheet("font-size: 11px; color: #64D2FF; font-weight: 600;")
         else:
-            self.lbl_tab4_suit.setText("Chưa có")
-        self.lbl_tab4_suit_score.setText(f"Suit Conf: {int(det.suit_confidence*100)}%")
+            self.lbl_tab4_suit.setText("Không có")
+            self.lbl_tab4_suit_score.setText("Suit: Không có")
+            self.lbl_tab4_suit_score.setStyleSheet("font-size: 11px; color: #8E8E93;")
 
         # 3. Query Crop
         if det.raw_crop is not None and det.raw_crop.size > 0:
@@ -483,28 +509,36 @@ class VisionDebugDialog(QDialog):
         elif det.matched_reference_id:
             ref_img = self.reference_library.get_reference_image(det.matched_reference_id)
 
-        if ref_img is not None:
+        if not is_non_card and ref_img is not None:
             norm_r = cv2.resize(ref_img, (120, 168))
             self._set_pixmap(self.lbl_tab4_ref, norm_r, 96, 134)
             sim_pct = int(det.matched_similarity * 100)
             self.lbl_tab4_ref_status.setText(f"Similarity: {sim_pct}% [Khớp]")
             self.lbl_tab4_ref_status.setStyleSheet("font-size: 11px; color: #30D158; font-weight: 700;")
         else:
-            self.lbl_tab4_ref.setText("Chưa có mẫu")
-            self.lbl_tab4_ref_status.setText("Chưa dùng ảnh mẫu")
+            self.lbl_tab4_ref.setText("Không áp dụng" if is_non_card else "Chưa có mẫu")
+            self.lbl_tab4_ref_status.setText("Không áp dụng ảnh mẫu" if is_non_card else "Chưa dùng ảnh mẫu")
             self.lbl_tab4_ref_status.setStyleSheet("font-size: 11px; color: #8E8E93;")
 
         # Decision text
-        tag = det.card.unicode_name if det.card else "Không xác định"
-        status_color = "#30D158" if det.recognition_status == "CONFIRMED" else ("#FF9F0A" if det.recognition_status in ("UNCERTAIN", "REFERENCE_NOT_USED") else "#FF453A")
-        
-        ref_source_str = "Có (Khớp từ mẫu đã xác nhận)" if det.is_reference_match else "Không (Dùng thuật toán font dự phòng)"
+        if det.card is not None:
+            tag = det.card.unicode_name
+            status_color = "#30D158" if det.recognition_status == "CONFIRMED" else ("#FF9F0A" if det.recognition_status in ("UNCERTAIN", "REFERENCE_NOT_USED") else "#FF453A")
+            ref_source_str = "Có (Khớp từ mẫu đã xác nhận)" if det.is_reference_match else "Không (Dùng thuật toán font dự phòng)"
+            recog_display = f"<span style='color:{status_color}'>{tag}</span> ({int(det.confidence*100)}%)"
+        else:
+            tag = f"[ĐỐI TƯỢNG KHÔNG PHẢI LÁ BÀI / {crop_st}]"
+            status_color = "#FF453A"
+            ref_source_str = "Không áp dụng (Không phải lá bài)"
+            recog_display = f"<span style='color:{status_color}; font-weight:700;'>{tag}</span> (0%)"
+
+        rej_reason = det.rejection_reason or det.uncertain_reason or ('Đối tượng không thỏa mãn cấu trúc lá bài' if is_non_card else 'Nhận diện tốt')
         self.lbl_tab4_decision.setText(
-            f"<b>Kết quả nhận diện:</b> <span style='color:{status_color}'>{tag}</span> ({int(det.confidence*100)}%)<br>"
+            f"<b>Kết quả nhận diện:</b> {recog_display}<br>"
             f"<b>Trạng thái:</b> <span style='color:{status_color}'>{det.recognition_status}</span><br>"
             f"<b>Sử dụng ảnh mẫu:</b> {ref_source_str}<br>"
             f"<b>Độ tương đồng ảnh mẫu (Similarity):</b> {int(det.matched_similarity*100)}%<br>"
-            f"<b>Ghi chú:</b> {det.uncertain_reason or 'Nhận diện tốt'}"
+            f"<b>Ghi chú / Lý do:</b> {rej_reason}"
         )
 
     @staticmethod

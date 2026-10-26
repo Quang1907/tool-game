@@ -445,6 +445,8 @@ class CardReferenceLibrary:
             cursor = conn.execute("SELECT * FROM card_references ORDER BY card_code ASC, created_at DESC")
             return [self._row_to_reference(row) for row in cursor.fetchall()]
 
+    list_all_references = get_all_references
+
     def get_reference_by_id(self, ref_id: str) -> Optional[CardReference]:
         """Retrieves a single reference by ID."""
         with self.db.get_connection() as conn:

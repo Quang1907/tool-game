@@ -611,3 +611,223 @@ class TestRankSuitDecouplingAndReferenceIntegrity:
         assert "QD" in dlg.lbl_ref_tag.text()
 
         dlg.close()
+
+
+class TestMandatoryVerificationTestSuite:
+    """Rigorous tests covering user prompt requirements:
+    - Test A: False positive (Avatar rejection, no fake KD 50%)
+    - Test B: Rank buttons (13 buttons with visible non-empty text, click updates rank without altering suit)
+    - Test C: Suit buttons (4 buttons, click updates suit without altering rank)
+    - Test D: Crop coordinates unification
+    - Test E: Confirmation & sample saving safety
+    """
+
+    @pytest.fixture
+    def player_avatar_image(self) -> np.ndarray:
+        """Constructs a realistic player avatar patch: squarish, portrait colors, no white card body."""
+        avatar = np.full((100, 100, 3), (35, 30, 25), dtype=np.uint8)  # Dark brown background
+        # Face circle with skin tone
+        cv2.circle(avatar, (50, 48), 32, (140, 180, 225), -1)  # BGR skin tone
+        # Hair
+        cv2.ellipse(avatar, (50, 30), (32, 18), 0, 180, 360, (20, 25, 40), -1)
+        # Eyes
+        cv2.circle(avatar, (40, 45), 4, (30, 30, 30), -1)
+        cv2.circle(avatar, (60, 45), 4, (30, 30, 30), -1)
+        # Gold avatar frame border
+        cv2.circle(avatar, (50, 50), 47, (40, 180, 220), 3)
+        return avatar
+
+    def test_a_avatar_not_recognized_as_card_and_no_fake_kd(self, player_avatar_image, isolated_lib):
+        """Test A: Player avatar is rejected as NON_CARD_OBJECT, never predicted as K♦, and has rejection reason."""
+        detector = CardDetector()
+        avatar_det = CardDetection(
+            detection_id="avatar_01",
+            bbox=(50, 50, 100, 100),
+            polygon=[(50, 50), (150, 50), (150, 150), (50, 150)],
+            detection_confidence=0.85,
+        )
+
+        full_table = np.full((300, 400, 3), (40, 80, 30), dtype=np.uint8)
+        full_table[50:150, 50:150] = player_avatar_image
+
+        crop_status, reason = detector.validate_crop(full_table, avatar_det)
+        assert crop_status in ("NON_CARD_OBJECT", "MISSING_RANK_REGION")
+        assert len(reason) > 0
+
+        # Pass through CardRecognizer
+        rec = CardRecognizer(reference_library=isolated_lib)
+        crop = CardCrop(
+            bbox=(50, 50, 100, 100),
+            image=cv2.resize(player_avatar_image, (120, 168)),
+            corner_crop=player_avatar_image[0:50, 0:42],
+            raw_patch=player_avatar_image,
+            crop_status=crop_status,
+        )
+        det_result = rec.recognize_crop(crop)
+
+        # Must NOT predict K♦ or any fake card
+        assert det_result.card is None
+        assert det_result.confidence == 0.0
+        assert det_result.crop_status == crop_status
+        assert det_result.recognition_status in ("NON_CARD_OBJECT", "MISSING_RANK_REGION", "RECOGNITION_FAILED")
+        assert len(det_result.rejection_reason) > 0 or len(det_result.uncertain_reason) > 0
+
+    def test_b_rank_buttons_all_13_visible_and_independent_selection(self, isolated_lib):
+        """Test B: Rank buttons row has all 13 values A..K, visible text, updates rank without changing suit."""
+        from PySide6.QtWidgets import QApplication
+        from app.ui.components.card_edit_dialog import CardEditDialog
+
+        app = QApplication.instance() or QApplication([])
+
+        # Start with King of Diamonds (K♦)
+        card_kd = Card(Rank.KING, Suit.DIAMONDS)
+        img_kd = make_card_crop_image(Rank.KING, Suit.DIAMONDS)
+        det = DetectedCard(
+            card=card_kd,
+            confidence=0.90,
+            bbox=(10, 10, 100, 140),
+            raw_crop=img_kd,
+        )
+
+        dlg = CardEditDialog(detected_card=det, reference_library=isolated_lib)
+
+        # 1. Verify exactly 13 rank buttons exist
+        expected_ranks = [
+            Rank.ACE, Rank.TWO, Rank.THREE, Rank.FOUR, Rank.FIVE, Rank.SIX,
+            Rank.SEVEN, Rank.EIGHT, Rank.NINE, Rank.TEN, Rank.JACK, Rank.QUEEN, Rank.KING
+        ]
+        assert len(dlg.rank_buttons) == 13
+        assert list(dlg.rank_buttons.keys()) == expected_ranks
+
+        # 2. Verify all buttons have visible non-empty text matching expected ranks
+        expected_labels = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
+        for rank, expected_lbl in zip(expected_ranks, expected_labels):
+            btn = dlg.rank_buttons[rank]
+            assert btn.text() == expected_lbl
+            assert len(btn.text()) > 0
+            # Ensure stylesheet contains zero padding to prevent text truncation
+            assert "padding: 0" in btn.styleSheet()
+
+        # 3. Click Rank 'Q': Rank changes to Q, Suit stays DIAMONDS (Q♦)
+        btn_q = dlg.rank_buttons[Rank.QUEEN]
+        btn_q.click()
+        assert dlg.selected_card == Card(Rank.QUEEN, Suit.DIAMONDS)
+        assert dlg.selected_card.rank == Rank.QUEEN
+        assert dlg.selected_card.suit == Suit.DIAMONDS
+
+        # 4. Click Rank 'A': Rank changes to A, Suit stays DIAMONDS (A♦)
+        btn_a = dlg.rank_buttons[Rank.ACE]
+        btn_a.click()
+        assert dlg.selected_card == Card(Rank.ACE, Suit.DIAMONDS)
+        assert dlg.selected_card.rank == Rank.ACE
+        assert dlg.selected_card.suit == Suit.DIAMONDS
+
+        dlg.close()
+
+    def test_c_suit_buttons_all_4_visible_and_independent_selection(self, isolated_lib):
+        """Test C: Suit buttons row has all 4 suits, updates suit without changing rank."""
+        from PySide6.QtWidgets import QApplication
+        from app.ui.components.card_edit_dialog import CardEditDialog
+
+        app = QApplication.instance() or QApplication([])
+
+        # Start with Queen of Diamonds (Q♦)
+        card_qd = Card(Rank.QUEEN, Suit.DIAMONDS)
+        img_qd = make_card_crop_image(Rank.QUEEN, Suit.DIAMONDS)
+        det = DetectedCard(
+            card=card_qd,
+            confidence=0.92,
+            bbox=(10, 10, 100, 140),
+            raw_crop=img_qd,
+        )
+
+        dlg = CardEditDialog(detected_card=det, reference_library=isolated_lib)
+
+        # 1. Verify exactly 4 suit buttons exist
+        expected_suits = [Suit.SPADES, Suit.CLUBS, Suit.DIAMONDS, Suit.HEARTS]
+        assert len(dlg.suit_buttons) == 4
+        assert list(dlg.suit_buttons.keys()) == expected_suits
+
+        # 2. Verify all buttons have visible non-empty text
+        for suit in expected_suits:
+            btn = dlg.suit_buttons[suit]
+            assert len(btn.text()) > 0
+
+        # 3. Click Suit 'H' (Hearts): Suit becomes HEARTS, Rank stays QUEEN (Q♥)
+        btn_h = dlg.suit_buttons[Suit.HEARTS]
+        btn_h.click()
+        assert dlg.selected_card == Card(Rank.QUEEN, Suit.HEARTS)
+        assert dlg.selected_card.rank == Rank.QUEEN
+        assert dlg.selected_card.suit == Suit.HEARTS
+
+        # 4. Click Suit 'S' (Spades): Suit becomes SPADES, Rank stays QUEEN (Q♠)
+        btn_s = dlg.suit_buttons[Suit.SPADES]
+        btn_s.click()
+        assert dlg.selected_card == Card(Rank.QUEEN, Suit.SPADES)
+        assert dlg.selected_card.rank == Rank.QUEEN
+        assert dlg.selected_card.suit == Suit.SPADES
+
+        dlg.close()
+
+    def test_d_crop_coordinates_unification_with_original_frame(self):
+        """Test D: All crop bboxes and patches match original frame coordinates."""
+        table_frame = np.full((480, 640, 3), (35, 120, 45), dtype=np.uint8)  # Green felt
+        # Place synthetic card at (x=160, y=90, w=100, h=140)
+        card_rect = _generate_synthetic_card("8", is_red=False, w=100, h=140)
+        table_frame[90:230, 160:260] = card_rect
+
+        detector = CardDetector()
+        crops = detector.detect_cards(table_frame)
+        assert len(crops) >= 1
+
+        # Check the detected crop for this card
+        c = next(cr for cr in crops if 140 <= cr.bbox[0] <= 180 and 70 <= cr.bbox[1] <= 110)
+        bx, by, bw, bh = c.bbox
+
+        # Coordinate integrity assertions
+        assert 0 <= bx < 640
+        assert 0 <= by < 480
+        assert bw > 0 and bh > 0
+        assert bx + bw <= 640
+        assert by + bh <= 480
+
+        # Source patch must match the exact table_frame pixels
+        assert c.raw_patch is not None
+        assert c.raw_patch.shape == (bh, bw, 3)
+        np.testing.assert_array_equal(c.raw_patch, table_frame[by : by + bh, bx : bx + bw])
+
+    def test_e_confirmation_safety_and_no_saving_non_card_objects(self, isolated_lib, player_avatar_image):
+        """Test E: Non-card objects cannot be saved as references, and dialog cancel discards changes."""
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        from app.ui.components.card_edit_dialog import CardEditDialog
+
+        app = QApplication.instance() or QApplication([])
+
+        # Candidate crop that is an avatar
+        non_card_det = DetectedCard(
+            card=None,
+            confidence=0.0,
+            bbox=(20, 20, 100, 100),
+            raw_crop=player_avatar_image,
+            crop_status="NON_CARD_OBJECT",
+            recognition_status="NON_CARD_OBJECT",
+        )
+
+        dlg = CardEditDialog(detected_card=non_card_det, reference_library=isolated_lib)
+
+        # Attempting to save non-card as reference must be blocked with a warning
+        with patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warn:
+            dlg._on_save_as_reference_clicked()
+            assert mock_warn.called
+            assert dlg.saved_as_reference is False
+
+        # No references added
+        assert len(isolated_lib.list_all_references()) == 0
+
+        # Dialog reject/cancel test: ensure it returns without confirming
+        dlg.reject()
+        assert dlg.is_confirmed is False
+
+        dlg.close()
+

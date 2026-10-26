@@ -17,8 +17,15 @@ from app.vision.image_preprocessor import ImagePreprocessor
 class CardDetectionStatus:
     CONFIRMED = "CONFIRMED"
     UNCERTAIN = "UNCERTAIN"
+    VALID_CARD = "VALID_CARD"
+    INVALID_CARD = "INVALID_CARD"
     INVALID_CARD_BOUNDS = "INVALID_CARD_BOUNDS"
     DETECTION_FAILED = "DETECTION_FAILED"
+    NON_CARD_OBJECT = "NON_CARD_OBJECT"
+    MISSING_RANK_REGION = "MISSING_RANK_REGION"
+    MISSING_SUIT_REGION = "MISSING_SUIT_REGION"
+    LOW_QUALITY_CARD = "LOW_QUALITY_CARD"
+    UNCERTAIN_CARD = "UNCERTAIN_CARD"
 
 
 @dataclass
@@ -231,14 +238,20 @@ class CardDetector:
             # 3. Non-card UI Rejection Filters
             # A. Highly saturated Game Buttons
             mean_sat = float(np.mean(roi_hsv[:, :, 1]))
-            if mean_sat > 130 and whiteness_ratio < 0.25:
+            if (mean_sat > 115 and whiteness_ratio < 0.35) or (mean_sat > 130 and whiteness_ratio < 0.45):
                 self._record_rejection(debug_info, "ui_button")
                 continue
 
-            # B. Circular Player Avatars
+            # B. Player Avatars (Circular or Squarish)
             perimeter = cv2.arcLength(cnt, True)
             circularity = (4.0 * np.pi * area) / (perimeter * perimeter) if perimeter > 0 else 0.0
-            if circularity > 0.82 and whiteness_ratio < 0.35:
+            if circularity > 0.65 and whiteness_ratio < 0.50:
+                self._record_rejection(debug_info, "ui_avatar")
+                continue
+
+            # Standalone squarish candidate (aspect ratio near 1.0) with low card whiteness
+            aspect = w / float(h)
+            if 0.82 <= aspect <= 1.25 and whiteness_ratio < 0.50:
                 self._record_rejection(debug_info, "ui_avatar")
                 continue
 
@@ -249,7 +262,6 @@ class CardDetector:
                 continue
 
             # D. Extreme aspect ratios (banners or separators)
-            aspect = w / float(h)
             if aspect < 0.20 or aspect > 6.0:
                 self._record_rejection(debug_info, "extreme_aspect")
                 continue
@@ -324,8 +336,8 @@ class CardDetector:
             crop_status, reason = self.validate_crop(table_image, det)
             det.crop_status = crop_status
 
-            if crop_status == "INVALID_CARD_CROP":
-                det.rejection_reason = reason or "INVALID_CARD_CROP"
+            if crop_status in ("INVALID_CARD_CROP", "NON_CARD_OBJECT", "MISSING_RANK_REGION", "MISSING_SUIT_REGION"):
+                det.rejection_reason = reason or crop_status
                 det.detection_status = "INVALID_CARD_BOUNDS"
                 debug_info.rejected_detections.append(det)
                 self._record_rejection(debug_info, det.rejection_reason)
@@ -541,12 +553,15 @@ class CardDetector:
         table_image: np.ndarray,
         det: CardDetection,
     ) -> Tuple[str, str]:
-        """Validates a candidate card crop based on size, aspect ratio, whiteness, and content.
+        """Validates a candidate card crop based on size, aspect ratio, whiteness, and corner index structure.
 
         Returns (crop_status, reason):
         - VALID_CARD_CROP: Clean, isolated card with visible rank and suit area.
         - PARTIALLY_OCCLUDED: Legitimate card in an overlapping fan.
-        - INVALID_CARD_CROP: Non-card UI, dark table felt, or invalid geometry.
+        - NON_CARD_OBJECT: Player avatar, square button, or non-card UI element.
+        - MISSING_RANK_REGION: Lacks clean white index area or rank glyph in top-left corner.
+        - MISSING_SUIT_REGION: Lacks suit symbol area.
+        - INVALID_CARD_CROP: Dark table felt, empty slot, or invalid geometry.
         - MULTIPLE_CARDS_IN_CROP: Contains two full unseparated cards.
         - LOW_QUALITY_CROP: Degraded, noisy, or extreme low contrast.
         """
@@ -557,8 +572,12 @@ class CardDetector:
             return "INVALID_CARD_CROP", "TOO_SMALL"
 
         aspect = w / float(h)
-        if aspect < 0.35 or aspect > 1.45:
+        if aspect < 0.20 or aspect > 2.2:
             return "INVALID_CARD_CROP", "INVALID_ASPECT_RATIO"
+
+        # Check for standalone squarish objects (circular/square player avatars or square buttons)
+        if 0.82 <= aspect <= 1.28 and not det.is_overlapping:
+            return "NON_CARD_OBJECT", "UI_AVATAR_OR_BUTTON"
 
         raw_patch = table_image[max(0, y) : min(img_h, y + h), max(0, x) : min(img_w, x + w)]
         if raw_patch.size == 0 or raw_patch.shape[0] < 20 or raw_patch.shape[1] < 15:
@@ -574,14 +593,29 @@ class CardDetector:
         if white_ratio < 0.20 or (mean_sat > 140 and white_ratio < 0.28):
             return "INVALID_CARD_CROP", "UI_OBJECT_OR_FELT"
 
-        if white_ratio < 0.28:
-            return "LOW_QUALITY_CROP", "LOW_PAPER_WHITENESS"
+        if mean_sat > 115 and white_ratio < 0.40:
+            return "NON_CARD_OBJECT", "SATURATED_UI_ELEMENT"
+
+        # Check top-left corner index area (Rank & Suit)
+        norm_patch = cv2.resize(raw_patch, (120, 168), interpolation=cv2.INTER_AREA)
+        corner = norm_patch[0:65, 0:45]
+        hsv_c = cv2.cvtColor(corner, cv2.COLOR_BGR2HSV)
+        gray_c = cv2.cvtColor(corner, cv2.COLOR_BGR2GRAY)
+
+        is_white_corner = (hsv_c[:, :, 1] <= 90) & (hsv_c[:, :, 2] >= 135) & (gray_c >= 130)
+        corner_white_ratio = float(np.mean(is_white_corner))
+
+        if corner_white_ratio < 0.38:
+            return "NON_CARD_OBJECT", "MISSING_RANK_REGION"
 
         if aspect > 1.25 and not det.is_overlapping:
             return "MULTIPLE_CARDS_IN_CROP", "MULTIPLE_CARDS_IN_CROP"
 
-        if det.is_partially_occluded or (0.38 <= aspect <= 0.65):
+        if det.is_partially_occluded or (0.35 <= aspect <= 0.65):
             return "PARTIALLY_OCCLUDED", ""
+
+        if white_ratio < 0.28:
+            return "LOW_QUALITY_CROP", "LOW_PAPER_WHITENESS"
 
         return "VALID_CARD_CROP", ""
 

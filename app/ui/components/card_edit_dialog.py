@@ -56,8 +56,18 @@ class CardEditDialog(QDialog):
         self.deleted_reference: bool = False
 
         self._card_buttons: dict[str, QPushButton] = {}
+        self._rank_buttons: dict[Rank, QPushButton] = {}
+        self._suit_buttons: dict[Suit, QPushButton] = {}
         self._init_ui()
         self._highlight_selected_card()
+
+    @property
+    def rank_buttons(self) -> dict[Rank, QPushButton]:
+        return self._rank_buttons
+
+    @property
+    def suit_buttons(self) -> dict[Suit, QPushButton]:
+        return self._suit_buttons
 
     def _init_ui(self) -> None:
         main_layout = QHBoxLayout(self)
@@ -147,21 +157,31 @@ class CardEditDialog(QDialog):
         layout_pred.addWidget(pred_title)
 
         # Predicted Card Badge
-        pred_str = self.detected_card.card.unicode_name if (self.detected_card and self.detected_card.card) else "Unknown"
-        conf_pct = int(self.detected_card.confidence * 100) if self.detected_card else 0
-        self.lbl_pred_badge = QLabel(f"Lá bài: {pred_str} ({conf_pct}%)")
-        color = "#30D158" if conf_pct >= 75 else ("#FF9F0A" if conf_pct >= 55 else "#FF453A")
-        self.lbl_pred_badge.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {color};")
-        layout_pred.addWidget(self.lbl_pred_badge)
+        if self.detected_card and self.detected_card.card:
+            pred_str = self.detected_card.card.unicode_name
+            conf_pct = int(self.detected_card.confidence * 100)
+            self.lbl_pred_badge = QLabel(f"Lá bài: {pred_str} ({conf_pct}%)")
+            color = "#30D158" if conf_pct >= 75 else ("#FF9F0A" if conf_pct >= 55 else "#FF453A")
+            self.lbl_pred_badge.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {color};")
+            layout_pred.addWidget(self.lbl_pred_badge)
 
-        # Detailed Rank and Suit Confidence
-        r_conf = int((self.detected_card.rank_confidence if self.detected_card else 0) * 100)
-        s_conf = int((self.detected_card.suit_confidence if self.detected_card else 0) * 100)
-        r_char = self.detected_card.rank_char if self.detected_card else "?"
-        s_char = self.detected_card.suit_char if self.detected_card else "?"
-        self.lbl_rank_suit_conf = QLabel(f"Rank: {r_char} ({r_conf}%) | Suit: {s_char} ({s_conf}%)")
-        self.lbl_rank_suit_conf.setStyleSheet("font-size: 11px; font-weight: 600; color: #64D2FF;")
-        layout_pred.addWidget(self.lbl_rank_suit_conf)
+            # Detailed Rank and Suit Confidence
+            r_conf = int(self.detected_card.rank_confidence * 100)
+            s_conf = int(self.detected_card.suit_confidence * 100)
+            r_char = self.detected_card.rank_char
+            s_char = self.detected_card.suit_char
+            self.lbl_rank_suit_conf = QLabel(f"Rank: {r_char} ({r_conf}%) | Suit: {s_char} ({s_conf}%)")
+            self.lbl_rank_suit_conf.setStyleSheet("font-size: 11px; font-weight: 600; color: #64D2FF;")
+            layout_pred.addWidget(self.lbl_rank_suit_conf)
+        else:
+            crop_st = getattr(self.detected_card, "crop_status", "NON_CARD_OBJECT") if self.detected_card else "UNKNOWN"
+            self.lbl_pred_badge = QLabel(f"Không phải lá bài [{crop_st}]")
+            self.lbl_pred_badge.setStyleSheet("font-size: 13px; font-weight: 700; color: #FF453A;")
+            layout_pred.addWidget(self.lbl_pred_badge)
+
+            self.lbl_rank_suit_conf = QLabel("Rank: - (Không hợp lệ) | Suit: - (Không hợp lệ)")
+            self.lbl_rank_suit_conf.setStyleSheet("font-size: 11px; font-weight: 600; color: #FF453A;")
+            layout_pred.addWidget(self.lbl_rank_suit_conf)
 
         # Source / Status & Similarity
         sim_pct = int((self.detected_card.matched_similarity if self.detected_card else 0) * 100)
@@ -241,21 +261,35 @@ class CardEditDialog(QDialog):
 
         # 1. Quick Rank Selector Row
         rank_row = QHBoxLayout()
-        rank_row.setSpacing(2)
+        rank_row.setSpacing(3)
         rank_title = QLabel("Rank:")
         rank_title.setStyleSheet("font-size: 11px; font-weight: 600; color: #8E8E93; min-width: 32px;")
         rank_row.addWidget(rank_title)
 
         ranks_order = [
-            Rank.TWO, Rank.THREE, Rank.FOUR, Rank.FIVE, Rank.SIX,
-            Rank.SEVEN, Rank.EIGHT, Rank.NINE, Rank.TEN,
-            Rank.JACK, Rank.QUEEN, Rank.KING, Rank.ACE
+            Rank.ACE,
+            Rank.TWO,
+            Rank.THREE,
+            Rank.FOUR,
+            Rank.FIVE,
+            Rank.SIX,
+            Rank.SEVEN,
+            Rank.EIGHT,
+            Rank.NINE,
+            Rank.TEN,
+            Rank.JACK,
+            Rank.QUEEN,
+            Rank.KING,
         ]
         self._rank_buttons: dict[Rank, QPushButton] = {}
         for r in ranks_order:
             btn_r = QPushButton(r.char)
-            btn_r.setFixedSize(30, 28)
+            btn_r.setFixedSize(36, 30)
             btn_r.setCursor(Qt.PointingHandCursor)
+            btn_r.setStyleSheet(
+                "padding: 0; font-size: 12px; font-weight: 600; color: #FFFFFF; "
+                "background-color: #2C2C2E; border: 1px solid #3A3A3C; border-radius: 4px;"
+            )
             btn_r.clicked.connect(lambda _, rank_val=r: self._on_rank_button_clicked(rank_val))
             self._rank_buttons[r] = btn_r
             rank_row.addWidget(btn_r)
@@ -263,7 +297,7 @@ class CardEditDialog(QDialog):
 
         # 2. Quick Suit Selector Row
         suit_row = QHBoxLayout()
-        suit_row.setSpacing(4)
+        suit_row.setSpacing(6)
         suit_title = QLabel("Suit:")
         suit_title.setStyleSheet("font-size: 11px; font-weight: 600; color: #8E8E93; min-width: 32px;")
         suit_row.addWidget(suit_title)
@@ -277,9 +311,12 @@ class CardEditDialog(QDialog):
         self._suit_buttons: dict[Suit, QPushButton] = {}
         for s_val, s_name, s_color in suit_defs:
             btn_s = QPushButton(s_name)
-            btn_s.setFixedHeight(28)
+            btn_s.setFixedHeight(30)
             btn_s.setCursor(Qt.PointingHandCursor)
-            btn_s.setStyleSheet(f"font-weight: 700; color: {s_color}; padding: 0 8px;")
+            btn_s.setStyleSheet(
+                f"padding: 0 10px; font-size: 12px; font-weight: 700; color: {s_color}; "
+                f"background-color: #2C2C2E; border: 1px solid #3A3A3C; border-radius: 4px;"
+            )
             btn_s.clicked.connect(lambda _, suit_val=s_val: self._on_suit_button_clicked(suit_val))
             self._suit_buttons[s_val] = btn_s
             suit_row.addWidget(btn_s)
@@ -521,10 +558,40 @@ class CardEditDialog(QDialog):
         self._update_reference_preview_for_selected_card()
 
     def _highlight_selected_card(self) -> None:
-        """Applies highlight styling to the currently selected card button."""
-        if not self.selected_card:
-            return
-        selected_code = f"{self.selected_card.rank.char}{self.selected_card.suit.char.upper()}"
+        """Applies highlight styling to Rank buttons, Suit buttons, and 52-card grid."""
+        sel_rank = self.selected_card.rank if self.selected_card else None
+        sel_suit = self.selected_card.suit if self.selected_card else None
+
+        # 1. Update Rank buttons
+        for r, btn in self._rank_buttons.items():
+            if r == sel_rank:
+                btn.setStyleSheet(
+                    "padding: 0; font-size: 13px; font-weight: 800; color: #FFFFFF; "
+                    "background-color: #0A84FF; border: 2px solid #FFFFFF; border-radius: 4px;"
+                )
+            else:
+                btn.setStyleSheet(
+                    "padding: 0; font-size: 12px; font-weight: 600; color: #FFFFFF; "
+                    "background-color: #2C2C2E; border: 1px solid #3A3A3C; border-radius: 4px;"
+                )
+
+        # 2. Update Suit buttons
+        for s, btn in self._suit_buttons.items():
+            is_red = s in (Suit.HEARTS, Suit.DIAMONDS)
+            s_color = "#FF453A" if is_red else "#FFFFFF"
+            if s == sel_suit:
+                btn.setStyleSheet(
+                    f"padding: 0 10px; font-size: 12px; font-weight: 800; color: #FFFFFF; "
+                    f"background-color: #0A84FF; border: 2px solid #FFFFFF; border-radius: 4px;"
+                )
+            else:
+                btn.setStyleSheet(
+                    f"padding: 0 10px; font-size: 12px; font-weight: 700; color: {s_color}; "
+                    f"background-color: #2C2C2E; border: 1px solid #3A3A3C; border-radius: 4px;"
+                )
+
+        # 3. Update 52-card grid buttons
+        selected_code = f"{self.selected_card.rank.char}{self.selected_card.suit.char.upper()}" if self.selected_card else None
         self._refresh_card_buttons_style(selected_code)
 
     def _refresh_card_buttons_style(self, selected_code: Optional[str] = None) -> None:
@@ -552,6 +619,13 @@ class CardEditDialog(QDialog):
 
     def _on_confirm_clicked(self) -> None:
         """Accepts the selected card and closes dialog."""
+        if not self.selected_card:
+            QMessageBox.warning(
+                self,
+                "Chưa chọn lá bài",
+                "Vui lòng chọn một lá bài từ bảng bên phải trước khi xác nhận!",
+            )
+            return
         self.is_confirmed = True
         self.accept()
 
@@ -563,6 +637,23 @@ class CardEditDialog(QDialog):
 
         if self.detected_card is None or self.detected_card.raw_crop is None or self.detected_card.raw_crop.size == 0:
             QMessageBox.warning(self, "Không có ảnh", "Không tìm thấy ảnh crop để lưu làm mẫu.")
+            return
+
+        if (
+            self.detected_card is not None
+            and getattr(self.detected_card, "crop_status", "") in (
+                "INVALID_CARD_CROP",
+                "NON_CARD_OBJECT",
+                "MISSING_RANK_REGION",
+                "MISSING_SUIT_REGION",
+            )
+        ):
+            QMessageBox.warning(
+                self,
+                "Không thể lưu ảnh mẫu",
+                "Vùng ảnh này được xác định là đối tượng không phải lá bài (Avatar người chơi hoặc nút UI).\n"
+                "Không thể lưu ảnh này vào thư viện mẫu!",
+            )
             return
 
         code = f"{self.selected_card.rank.char}{self.selected_card.suit.char.upper()}"
