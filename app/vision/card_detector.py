@@ -34,16 +34,24 @@ class CardDetection:
     aspect_ratio: float = 0.0
     rejection_reason: str = ""
     detection_status: str = "CONFIRMED"     # CONFIRMED, UNCERTAIN, INVALID_CARD_BOUNDS, DETECTION_FAILED
+    crop_status: str = "VALID_CARD_CROP"    # VALID_CARD_CROP, INVALID_CARD_CROP, MULTIPLE_CARDS_IN_CROP, PARTIALLY_OCCLUDED, LOW_QUALITY_CROP
+    duplicate_group: str = ""
 
     def to_dict(self) -> dict:
         return {
             "detection_id": self.detection_id,
             "bbox": list(self.bbox),
+            "width": self.bbox[2],
+            "height": self.bbox[3],
+            "aspect_ratio": self.aspect_ratio,
             "polygon": [list(pt) for pt in self.polygon],
             "detection_confidence": round(self.detection_confidence, 4),
             "occlusion": self.is_partially_occluded,
             "is_overlapping": self.is_overlapping,
             "detection_status": self.detection_status,
+            "crop_status": self.crop_status,
+            "duplicate_group": self.duplicate_group,
+            "rejection_reason": self.rejection_reason,
         }
 
 
@@ -57,6 +65,7 @@ class CardCrop:
     suit_crop: Optional[np.ndarray] = None  # Dedicated suit symbol crop (~36x36)
     raw_patch: Optional[np.ndarray] = None  # Unmodified patch from source image
     detection: Optional[CardDetection] = None
+    crop_status: str = "VALID_CARD_CROP"
 
     def __post_init__(self) -> None:
         if self.detection is None:
@@ -72,6 +81,7 @@ class CardCrop:
                     polygon=poly,
                     detection_confidence=0.95,
                     detection_status="CONFIRMED",
+                    crop_status=self.crop_status,
                 ),
             )
 
@@ -87,6 +97,10 @@ class DetectionDebugInfo:
     uncertain_count: int = 0
     confirmed_count: int = 0
     raw_candidates_found: int = 0
+    accepted_detections: List[CardDetection] = field(default_factory=list)
+    duplicate_detections: List[CardDetection] = field(default_factory=list)
+    rejected_detections: List[CardDetection] = field(default_factory=list)
+    uncertain_detections: List[CardDetection] = field(default_factory=list)
     original_frame: Optional[np.ndarray] = None
     detection_overlay: Optional[np.ndarray] = None
     status: str = "OK"                      # OK, DETECTION_FAILED, INVALID_CARD_BOUNDS
@@ -94,7 +108,8 @@ class DetectionDebugInfo:
     def summary_str(self) -> str:
         rejected_details = ", ".join(f"{k}: {v}" for k, v in self.rejection_breakdown.items()) or "0"
         return (
-            f"Phát hiện: {self.total_detected} lá | "
+            f"Phát hiện hợp lệ: {self.total_detected} lá | "
+            f"Trùng lặp: {len(self.duplicate_detections)} | "
             f"Bị loại: {self.total_rejected} đối tượng ({rejected_details}) | "
             f"Nghi ngờ: {self.uncertain_count} lá | "
             f"Trạng thái: {self.status} | "
@@ -241,7 +256,7 @@ class CardDetector:
 
             # 4. Overlapping Cluster vs. Single Card Detection
             ideal_card_w = int(h * 0.714)
-            is_cluster = (aspect >= 0.82 or w >= int(ideal_card_w * 1.25)) and w > 40
+            is_cluster = (aspect >= 0.95 and w >= int(ideal_card_w * 1.35)) and w >= 60
 
             if is_cluster:
                 # Horizontal cascaded or fanned overlapping cards
@@ -288,11 +303,12 @@ class CardDetector:
                         area=float(rw * rh),
                         aspect_ratio=round(rw / float(rh), 3),
                         detection_status=det_status,
+                        crop_status="PARTIALLY_OCCLUDED" if is_occluded else "VALID_CARD_CROP",
                     )
                 )
 
-        # 5. Non-Maximum Suppression (NMS) preserving distinct fanned/cluster cards
-        filtered_dets = self._apply_nms(candidates, iou_threshold=0.45)
+        # 5. Non-Maximum Suppression (NMS) with Object-Level Deduplication
+        filtered_dets = self._apply_nms(candidates, debug_info=debug_info, iou_threshold=0.48)
 
         # 6. Natural Spatial Ordering (row-by-row top to bottom, then left to right)
         if filtered_dets:
@@ -300,21 +316,41 @@ class CardDetector:
             row_tolerance = max(20.0, avg_h * 0.45)
             filtered_dets.sort(key=lambda d: (int(d.bbox[1] / row_tolerance), d.bbox[0]))
 
-        # 7. Perspective Warp & Normalization into 120x168 CardCrop patches
+        # 7. Crop Validation & Normalization into CardCrop patches
         crops: List[CardCrop] = []
+        accepted_dets: List[CardDetection] = []
         for idx, det in enumerate(filtered_dets):
             det.detection_id = f"card_{idx + 1:03d}"
-            crop = self._build_single_crop(table_image, det)
-            crops.append(crop)
+            crop_status, reason = self.validate_crop(table_image, det)
+            det.crop_status = crop_status
 
+            if crop_status == "INVALID_CARD_CROP":
+                det.rejection_reason = reason or "INVALID_CARD_CROP"
+                det.detection_status = "INVALID_CARD_BOUNDS"
+                debug_info.rejected_detections.append(det)
+                self._record_rejection(debug_info, det.rejection_reason)
+                continue
+
+            crop = self._build_single_crop(table_image, det)
+            crop.crop_status = crop_status
+            crops.append(crop)
+            accepted_dets.append(det)
+
+            if det.detection_status == "UNCERTAIN" or crop_status == "LOW_QUALITY_CROP":
+                debug_info.uncertain_detections.append(det)
+                debug_info.uncertain_count += 1
+            else:
+                debug_info.confirmed_count += 1
+
+        debug_info.accepted_detections = accepted_dets
         debug_info.total_detected = len(crops)
         debug_info.detection_time_ms = (time.perf_counter() - start_t) * 1000.0
         debug_info.original_frame = table_image.copy()
-        debug_info.detection_overlay = self.generate_detection_overlay(table_image, filtered_dets)
+        debug_info.detection_overlay = self.generate_detection_overlay(table_image, accepted_dets)
 
         if not crops:
             debug_info.status = "DETECTION_FAILED"
-        elif any(d.detection_status == "INVALID_CARD_BOUNDS" for d in filtered_dets):
+        elif any(d.detection_status == "INVALID_CARD_BOUNDS" for d in accepted_dets):
             debug_info.status = "INVALID_CARD_BOUNDS"
         else:
             debug_info.status = "OK"
@@ -349,35 +385,44 @@ class CardDetector:
         kernel_size = 5
         smoothed = cv2.GaussianBlur(col_sums.reshape(1, -1), (kernel_size, 1), 0).flatten()
 
-        # Find significant edge transitions (peaks indicate card left edges)
-        min_card_step = max(24, int(bh * 0.18))
+        est_card_w = max(40, int(bh * 0.714))
+        min_card_step = max(28, int(bh * 0.20))
+        max_possible_cards = min(5, max(2, int((bw - est_card_w) / min_card_step) + 1))
+
         mean_val = float(np.mean(smoothed))
         std_val = float(np.std(smoothed))
         max_peak = float(np.max(smoothed))
-        thresh = max(mean_val + 0.50 * std_val, max_peak * 0.35)
+        thresh = max(mean_val + 0.85 * std_val, max_peak * 0.40)
 
-        peaks: List[int] = [0]  # First card starts at leftmost boundary
+        # Collect candidate transition peaks
+        candidate_peaks: List[Tuple[int, float]] = []
         for col in range(min_card_step, bw - min_card_step):
             if smoothed[col] > thresh:
                 window = smoothed[max(0, col - 8) : min(bw, col + 9)]
                 if smoothed[col] == np.max(window):
-                    if col - peaks[-1] >= min_card_step:
-                        peaks.append(col)
+                    candidate_peaks.append((col, float(smoothed[col])))
 
-        est_card_w = max(min_card_step * 2, int(bh * 0.714))
+        # Pick the most prominent peaks with minimum separation
+        candidate_peaks.sort(key=lambda p: p[1], reverse=True)
+        chosen_peaks: List[int] = [0]
+        for col, _ in candidate_peaks:
+            if len(chosen_peaks) >= max_possible_cards:
+                break
+            if all(abs(col - cp) >= min_card_step for cp in chosen_peaks):
+                chosen_peaks.append(col)
 
-        for i, left_col in enumerate(peaks):
-            is_last = (i == len(peaks) - 1)
-            if not is_last:
-                card_w = min(est_card_w, bw - left_col)
-                is_occluded = True
-            else:
-                card_w = min(est_card_w, bw - left_col)
-                is_occluded = False
+        chosen_peaks.sort()
+
+        for i, left_col in enumerate(chosen_peaks):
+            is_last = (i == len(chosen_peaks) - 1)
+            is_occluded = not is_last
 
             abs_x = bx + left_col
-            abs_w = min(card_w, table_image.shape[1] - abs_x)
-            if abs_w < 16:
+            abs_w = min(est_card_w, table_image.shape[1] - abs_x)
+            if is_last:
+                abs_w = min(est_card_w, bw - left_col)
+
+            if abs_w < 20:
                 continue
 
             poly = [
@@ -397,6 +442,7 @@ class CardDetector:
                 area=float(abs_w * bh),
                 aspect_ratio=round(abs_w / float(bh), 3),
                 detection_status="CONFIRMED",
+                crop_status="PARTIALLY_OCCLUDED" if is_occluded else "VALID_CARD_CROP",
             )
             detections.append(det)
 
@@ -489,34 +535,91 @@ class CardDetector:
 
         return overlay
 
-    @staticmethod
+    @classmethod
+    def validate_crop(
+        cls,
+        table_image: np.ndarray,
+        det: CardDetection,
+    ) -> Tuple[str, str]:
+        """Validates a candidate card crop based on size, aspect ratio, whiteness, and content.
+
+        Returns (crop_status, reason):
+        - VALID_CARD_CROP: Clean, isolated card with visible rank and suit area.
+        - PARTIALLY_OCCLUDED: Legitimate card in an overlapping fan.
+        - INVALID_CARD_CROP: Non-card UI, dark table felt, or invalid geometry.
+        - MULTIPLE_CARDS_IN_CROP: Contains two full unseparated cards.
+        - LOW_QUALITY_CROP: Degraded, noisy, or extreme low contrast.
+        """
+        x, y, w, h = det.bbox
+        img_h, img_w = table_image.shape[:2]
+
+        if w < 24 or h < 35:
+            return "INVALID_CARD_CROP", "TOO_SMALL"
+
+        aspect = w / float(h)
+        if aspect < 0.35 or aspect > 1.45:
+            return "INVALID_CARD_CROP", "INVALID_ASPECT_RATIO"
+
+        raw_patch = table_image[max(0, y) : min(img_h, y + h), max(0, x) : min(img_w, x + w)]
+        if raw_patch.size == 0 or raw_patch.shape[0] < 20 or raw_patch.shape[1] < 15:
+            return "INVALID_CARD_CROP", "EMPTY_PATCH"
+
+        hsv = cv2.cvtColor(raw_patch, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(raw_patch, cv2.COLOR_BGR2GRAY)
+
+        is_white = (hsv[:, :, 1] <= 110) & (hsv[:, :, 2] >= 115) & (gray >= 115)
+        white_ratio = np.count_nonzero(is_white) / float(raw_patch.shape[0] * raw_patch.shape[1])
+
+        mean_sat = float(np.mean(hsv[:, :, 1]))
+        if white_ratio < 0.20 or (mean_sat > 140 and white_ratio < 0.28):
+            return "INVALID_CARD_CROP", "UI_OBJECT_OR_FELT"
+
+        if white_ratio < 0.28:
+            return "LOW_QUALITY_CROP", "LOW_PAPER_WHITENESS"
+
+        if aspect > 1.25 and not det.is_overlapping:
+            return "MULTIPLE_CARDS_IN_CROP", "MULTIPLE_CARDS_IN_CROP"
+
+        if det.is_partially_occluded or (0.38 <= aspect <= 0.65):
+            return "PARTIALLY_OCCLUDED", ""
+
+        return "VALID_CARD_CROP", ""
+
+    @classmethod
     def _apply_nms(
-        candidates: List[CardDetection], iou_threshold: float = 0.45
+        cls,
+        candidates: List[CardDetection],
+        debug_info: Optional[DetectionDebugInfo] = None,
+        iou_threshold: float = 0.48,
     ) -> List[CardDetection]:
-        """Applies Non-Maximum Suppression to eliminate duplicate bounding boxes,
-        preserving distinct overlapping cards in a fanned cluster.
+        """Applies rigorous 3-stage object deduplication:
+        1. Sub-box / Containment suppression (eliminates inner contours and drawings).
+        2. IoU-based deduplication (eliminates jittered / shifted duplicate boxes).
+        3. Preserves genuine distinct overlapping cards in a fan.
         """
         if not candidates:
             return []
 
-        # Sort by detection confidence descending
-        sorted_candidates = sorted(candidates, key=lambda c: c.detection_confidence, reverse=True)
+        # Sort by detection confidence descending, then by area descending
+        sorted_candidates = sorted(
+            candidates,
+            key=lambda c: (c.detection_confidence, c.area),
+            reverse=True,
+        )
+
         keep: List[CardDetection] = []
+        duplicates: List[CardDetection] = []
 
         for cand in sorted_candidates:
             cx, cy, cw, ch = cand.bbox
             cand_area = float(cw * ch)
-            suppressed = False
+            is_dup = False
+            suppression_reason = ""
+            dup_group = ""
 
             for kept in keep:
                 kx, ky, kw, kh = kept.bbox
                 kept_area = float(kw * kh)
-
-                # If both are cards in an overlapping cluster and their left edges differ by >= 15px,
-                # they are separate cards in the cluster - DO NOT suppress!
-                if cand.is_overlapping and kept.is_overlapping:
-                    if abs(cx - kx) >= 15:
-                        continue
 
                 # Intersection rectangle
                 ix1 = max(cx, kx)
@@ -528,16 +631,62 @@ class CardDetector:
                 ih = max(0, iy2 - iy1)
                 intersection = float(iw * ih)
 
-                if intersection > 0:
-                    union = cand_area + kept_area - intersection
-                    iou = intersection / union if union > 0 else 0.0
-                    containment = max(intersection / cand_area, intersection / kept_area)
-                    if iou > iou_threshold or containment > 0.80:
-                        suppressed = True
-                        break
+                if intersection <= 0:
+                    continue
 
-            if not suppressed:
+                union = cand_area + kept_area - intersection
+                iou = intersection / union if union > 0 else 0.0
+                containment_cand = intersection / cand_area if cand_area > 0 else 0.0
+                containment_kept = intersection / kept_area if kept_area > 0 else 0.0
+
+                # Check if in same horizontal row
+                vert_diff = abs(cy - ky)
+                max_h = max(ch, kh)
+                same_row = vert_diff <= (0.28 * max_h)
+
+                # Check left edge separation
+                horiz_diff = abs(cx - kx)
+                min_step = max(26, int(min(ch, kh) * 0.20))
+
+                # CASE 1: High IoU -> Duplicate detection of the same card
+                if iou >= iou_threshold:
+                    is_dup = True
+                    suppression_reason = "DUPLICATE_BOX"
+                    dup_group = kept.detection_id or "group_001"
+                    break
+
+                # CASE 2: Sub-box containment (cand is a smaller child contour inside kept)
+                if containment_cand >= 0.70:
+                    is_dup = True
+                    suppression_reason = "CONTAINED_IN_ANOTHER_CARD"
+                    dup_group = kept.detection_id or "group_001"
+                    break
+
+                # CASE 3: Moderate IoU or overlap in the same row
+                if same_row:
+                    if horiz_diff < min_step:
+                        # Left edges start at almost the same spot -> same card!
+                        is_dup = True
+                        suppression_reason = "DUPLICATE_BOX"
+                        dup_group = kept.detection_id or "group_001"
+                        break
+                    elif cand.is_overlapping or kept.is_overlapping:
+                        # Genuine separate overlapping cards in a fan!
+                        # Both have valid left edges and separate start columns
+                        continue
+
+            if is_dup:
+                cand.rejection_reason = suppression_reason
+                cand.duplicate_group = dup_group
+                cand.detection_status = "INVALID_CARD_BOUNDS"
+                duplicates.append(cand)
+                if debug_info is not None:
+                    cls._record_rejection(debug_info, suppression_reason)
+            else:
                 keep.append(cand)
+
+        if debug_info is not None:
+            debug_info.duplicate_detections = duplicates
 
         return keep
 

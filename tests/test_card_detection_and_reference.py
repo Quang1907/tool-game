@@ -21,7 +21,7 @@ import pytest
 
 from app.core.card import Card, Rank, Suit
 from app.database.db import DatabaseManager
-from app.vision.card_detector import CardCrop, CardDetector, CardDetectionStatus
+from app.vision.card_detector import CardCrop, CardDetector, CardDetectionStatus, CardDetection, DetectionDebugInfo
 from app.vision.card_recognizer import CardRecognizer, DetectedCard
 from app.vision.card_reference_library import CardReferenceLibrary
 
@@ -348,3 +348,127 @@ class TestDiagnosticErrorDifferentiation:
             # If it matched the reference, then manually verify status assignment
             det.recognition_status = "REFERENCE_NOT_USED"
             assert det.recognition_status == "REFERENCE_NOT_USED"
+
+
+class TestDeduplicationAndCropValidation:
+    """Tests for Part G: Duplicate detection suppression, adjacent cards preservation, and crop validation."""
+
+    def test_duplicate_box_suppression(self):
+        """Two boxes nearly identical or shifted on same card -> only 1 card kept, 1 marked DUPLICATE_BOX."""
+        cand1 = CardDetection(
+            detection_id="c1",
+            bbox=(100, 100, 90, 130),
+            polygon=[],
+            detection_confidence=0.95,
+        )
+        cand2 = CardDetection(
+            detection_id="c2",
+            bbox=(104, 102, 90, 130),  # 4px shift, same card
+            polygon=[],
+            detection_confidence=0.88,
+        )
+        debug_info = DetectionDebugInfo()
+        kept = CardDetector._apply_nms([cand1, cand2], debug_info=debug_info)
+        assert len(kept) == 1
+        assert kept[0].detection_id == "c1"
+        assert len(debug_info.duplicate_detections) == 1
+        assert debug_info.duplicate_detections[0].detection_id == "c2"
+        assert debug_info.duplicate_detections[0].rejection_reason == "DUPLICATE_BOX"
+
+    def test_contained_sub_box_suppression(self):
+        """Child contour or inner illustration contour inside card -> marked CONTAINED_IN_ANOTHER_CARD."""
+        parent_card = CardDetection(
+            detection_id="p1",
+            bbox=(100, 100, 100, 140),
+            polygon=[],
+            detection_confidence=0.96,
+        )
+        inner_contour = CardDetection(
+            detection_id="inner",
+            bbox=(120, 115, 60, 80),  # strictly inside parent
+            polygon=[],
+            detection_confidence=0.75,
+        )
+        debug_info = DetectionDebugInfo()
+        kept = CardDetector._apply_nms([parent_card, inner_contour], debug_info=debug_info)
+        assert len(kept) == 1
+        assert kept[0].detection_id == "p1"
+        assert len(debug_info.duplicate_detections) == 1
+        assert debug_info.duplicate_detections[0].rejection_reason == "CONTAINED_IN_ANOTHER_CARD"
+
+    def test_overlapping_cards_in_fan_preserved(self):
+        """Distinct overlapping cards in a fan (e.g. 45px horizontal step) -> BOTH kept."""
+        card1 = CardDetection(
+            detection_id="fan1",
+            bbox=(100, 100, 95, 135),
+            polygon=[],
+            detection_confidence=0.94,
+            is_overlapping=True,
+        )
+        card2 = CardDetection(
+            detection_id="fan2",
+            bbox=(145, 100, 95, 135),  # 45px step, legitimate overlap in fan
+            polygon=[],
+            detection_confidence=0.92,
+            is_overlapping=True,
+        )
+        debug_info = DetectionDebugInfo()
+        kept = CardDetector._apply_nms([card1, card2], debug_info=debug_info)
+        assert len(kept) == 2
+        assert len(debug_info.duplicate_detections) == 0
+
+    def test_side_by_side_cards_preserved(self):
+        """Two separated or side-by-side cards -> BOTH kept."""
+        card1 = CardDetection(
+            detection_id="s1",
+            bbox=(100, 100, 90, 130),
+            polygon=[],
+            detection_confidence=0.95,
+        )
+        card2 = CardDetection(
+            detection_id="s2",
+            bbox=(205, 100, 90, 130),  # non-overlapping adjacent card
+            polygon=[],
+            detection_confidence=0.95,
+        )
+        debug_info = DetectionDebugInfo()
+        kept = CardDetector._apply_nms([card1, card2], debug_info=debug_info)
+        assert len(kept) == 2
+
+    def test_crop_validation(self):
+        """Validates clean crop vs UI button or felt."""
+        # Clean white card crop
+        clean_img = np.full((140, 100, 3), 250, dtype=np.uint8)
+        det_clean = CardDetection("c1", (0, 0, 100, 140), [], 0.95)
+        st_clean, r_clean = CardDetector.validate_crop(clean_img, det_clean)
+        assert st_clean == "VALID_CARD_CROP"
+
+        # Saturated orange button
+        orange_btn = np.zeros((140, 100, 3), dtype=np.uint8)
+        orange_btn[:] = (20, 140, 240)
+        det_btn = CardDetection("b1", (0, 0, 100, 140), [], 0.95)
+        st_btn, r_btn = CardDetector.validate_crop(orange_btn, det_btn)
+        assert st_btn == "INVALID_CARD_CROP"
+        assert r_btn == "UI_OBJECT_OR_FELT"
+
+    def test_vision_debug_dialog_no_crash(self):
+        """Tests that VisionDebugDialog initializes with original_frame without TypeError."""
+        from PySide6.QtWidgets import QApplication
+        from app.ui.components.vision_debug_dialog import VisionDebugDialog
+
+        # Ensure QApplication exists
+        app = QApplication.instance() or QApplication([])
+
+        dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
+        info = DetectionDebugInfo()
+        cards = []
+
+        # Must not raise TypeError: unexpected keyword argument 'original_frame'
+        dialog = VisionDebugDialog(
+            original_frame=dummy_img,
+            debug_info=info,
+            detected_cards=cards,
+        )
+        assert dialog is not None
+        assert dialog.table_image is not None
+        dialog.close()

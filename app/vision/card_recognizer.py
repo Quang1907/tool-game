@@ -37,6 +37,9 @@ class DetectedCard:
     polygon: List[Tuple[int, int]] = field(default_factory=list)
     detection_confidence: float = 1.0
     detection_status: str = "CONFIRMED"
+    crop_status: str = "VALID_CARD_CROP"
+    duplicate_group: str = ""
+    rejection_reason: str = ""
     is_overlapping: bool = False
     is_partially_occluded: bool = False
     recognition_status: str = "CONFIRMED"
@@ -79,6 +82,9 @@ class DetectedCard:
             "confidence": round(self.confidence, 4),
             "detection_status": self.detection_status,
             "recognition_status": self.recognition_status,
+            "crop_status": self.crop_status,
+            "duplicate_group": self.duplicate_group,
+            "rejection_reason": self.rejection_reason,
             "bbox": list(self.bbox),
             "polygon": [list(pt) for pt in self.polygon],
             "is_overlapping": self.is_overlapping,
@@ -135,12 +141,28 @@ class CardRecognizer:
 
     def recognize_crop(self, crop: CardCrop) -> DetectedCard:
         """Classifies an individual card crop by decoupling Rank and Suit recognition."""
+        if crop.crop_status == "INVALID_CARD_CROP":
+            return DetectedCard(
+                card=None,
+                confidence=0.0,
+                bbox=crop.bbox,
+                raw_crop=crop.image if crop.image is not None else np.zeros((168, 120, 3), dtype=np.uint8),
+                detection_confidence=crop.detection.detection_confidence if crop.detection else 0.0,
+                detection_status="INVALID_CARD_BOUNDS",
+                crop_status=crop.crop_status,
+                rejection_reason=crop.detection.rejection_reason if crop.detection else "INVALID_CARD_CROP",
+                recognition_status="INVALID_CARD_BOUNDS",
+                uncertain_reason="Crop không phải vùng bài hợp lệ",
+                is_uncertain=True,
+            )
+
         if crop.image is None or crop.image.size == 0 or crop.bbox[2] < 10 or crop.bbox[3] < 10:
             return DetectedCard(
                 card=None,
                 confidence=0.0,
                 bbox=crop.bbox,
                 raw_crop=np.zeros((168, 120, 3), dtype=np.uint8),
+                crop_status="INVALID_CARD_CROP",
                 recognition_status="CROP_FAILED",
                 uncertain_reason="Crop ảnh rỗng hoặc không hợp lệ",
                 is_uncertain=True,
@@ -253,18 +275,35 @@ class CardRecognizer:
 
         # 6. Compute overall confidence and uncertainty
         card = Card(final_rank, final_suit) if (final_rank and final_suit) else None
-        overall_conf = round(final_rank_conf * 0.50 + final_suit_conf * 0.50, 4)
+        det_conf = crop.detection.detection_confidence if crop.detection else 1.0
 
-        is_uncertain = (card is None) or (overall_conf < 0.65) or (final_rank_conf < 0.60) or (final_suit_conf < 0.60)
+        recog_conf = round(final_rank_conf * 0.50 + final_suit_conf * 0.50, 4)
+        if is_ref_match:
+            recog_conf = max(recog_conf, round(matched_similarity, 4))
+
+        overall_conf = round(0.15 * det_conf + 0.85 * recog_conf, 4)
+
+        if crop.crop_status == "LOW_QUALITY_CROP":
+            overall_conf = round(overall_conf * 0.85, 4)
+
+        is_uncertain = (
+            (card is None)
+            or (overall_conf < 0.65)
+            or (final_rank_conf < 0.55)
+            or (final_suit_conf < 0.55)
+            or (det_conf < 0.65)
+        )
         uncertain_reason = ""
         if is_uncertain:
             if card is None:
                 uncertain_reason = "Không nhận diện được rank hoặc suit"
-            elif final_rank_conf < 0.60 and final_suit_conf < 0.60:
+            elif det_conf < 0.65:
+                uncertain_reason = f"Độ tin cậy vị trí lá bài thấp ({int(det_conf*100)}%)"
+            elif final_rank_conf < 0.55 and final_suit_conf < 0.55:
                 uncertain_reason = f"Độ tin cậy rank ({int(final_rank_conf*100)}%) và suit ({int(final_suit_conf*100)}%) đều thấp"
-            elif final_rank_conf < 0.60:
+            elif final_rank_conf < 0.55:
                 uncertain_reason = f"Độ tin cậy rank thấp ({int(final_rank_conf*100)}%)"
-            elif final_suit_conf < 0.60:
+            elif final_suit_conf < 0.55:
                 uncertain_reason = f"Độ tin cậy suit thấp ({int(final_suit_conf*100)}%)"
             else:
                 uncertain_reason = f"Độ tin cậy tổng thể thấp ({int(overall_conf*100)}%)"
@@ -275,7 +314,6 @@ class CardRecognizer:
             has_saved_ref = len(self.reference_library.get_references_for_card(code)) > 0
 
         det_id = crop.detection.detection_id if crop.detection else "card_000"
-        det_conf = crop.detection.detection_confidence if crop.detection else 1.0
         poly = list(crop.detection.polygon) if (crop.detection and crop.detection.polygon) else []
         is_overlap = crop.detection.is_overlapping if crop.detection else False
         is_occluded = crop.detection.is_partially_occluded if crop.detection else False
@@ -319,6 +357,9 @@ class CardRecognizer:
             polygon=poly,
             detection_confidence=round(det_conf, 4),
             detection_status=det_status,
+            crop_status=crop.crop_status,
+            duplicate_group=crop.detection.duplicate_group if crop.detection else "",
+            rejection_reason=crop.detection.rejection_reason if crop.detection else "",
             is_overlapping=is_overlap,
             is_partially_occluded=is_occluded,
             recognition_status=recog_status,

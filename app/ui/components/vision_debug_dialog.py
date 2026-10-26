@@ -42,18 +42,21 @@ class VisionDebugDialog(QDialog):
 
     def __init__(
         self,
-        table_image: Optional[np.ndarray],
-        debug_info: Optional[DetectionDebugInfo],
-        detected_cards: List[DetectedCard],
+        table_image: Optional[np.ndarray] = None,
+        debug_info: Optional[DetectionDebugInfo] = None,
+        detected_cards: Optional[List[DetectedCard]] = None,
         reference_library: Optional[CardReferenceLibrary] = None,
         parent: Optional[QWidget] = None,
+        *,
+        original_frame: Optional[np.ndarray] = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("🔬 Kiểm tra Debug Computer Vision (4 Bước Chẩn Đoán)")
         self.resize(1000, 680)
         self.setMinimumSize(850, 550)
 
-        self.table_image = table_image
+        # Support both original_frame and table_image cleanly
+        self.table_image = original_frame if original_frame is not None else table_image
         self.debug_info = debug_info
         self.detected_cards = detected_cards or []
         self.reference_library = reference_library or CardReferenceLibrary()
@@ -155,45 +158,93 @@ class VisionDebugDialog(QDialog):
         scroll.setWidget(lbl_overlay)
         splitter.addWidget(scroll)
 
-        # Bottom: Table listing every detected object
-        table_box = QGroupBox("Danh sách đối tượng lá bài phát hiện được thực tế:")
+        # Bottom: Table listing every detected object with filter (Accepted, Duplicates, Rejected)
+        table_box = QGroupBox("Bảng đối chiếu Detection & Deduplication (Part F):")
         tbl_layout = QVBoxLayout(table_box)
-        table = QTableWidget()
-        table.setColumnCount(7)
-        table.setHorizontalHeaderLabels([
-            "ID", "Bounding Box (x, y, w, h)", "Kích thước (WxH)", "Vị trí", "Det. Conf", "Trạng thái", "Phân loại"
+
+        filter_bar = QHBoxLayout()
+        filter_bar.addWidget(QLabel("Xem nhóm đối tượng:"))
+        self.combo_tab2_filter = QComboBox()
+        self.combo_tab2_filter.addItems([
+            f"✅ Lá bài hợp lệ ({len(self.detected_cards)})",
+            f"⚠️ Detections trùng lặp ({len(self.debug_info.duplicate_detections) if self.debug_info else 0})",
+            f"❌ Contours bị loại ({len(self.debug_info.rejected_detections) if self.debug_info else 0})",
         ])
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        table.setRowCount(len(self.detected_cards))
+        self.combo_tab2_filter.currentIndexChanged.connect(self._on_tab2_filter_changed)
+        filter_bar.addWidget(self.combo_tab2_filter)
+        filter_bar.addStretch()
+        tbl_layout.addLayout(filter_bar)
 
-        for row, det in enumerate(self.detected_cards):
-            x, y, dw, dh = det.bbox
-            table.setItem(row, 0, QTableWidgetItem(det.detection_id))
-            table.setItem(row, 1, QTableWidgetItem(f"({x}, {y}, {dw}, {dh})"))
-            table.setItem(row, 2, QTableWidgetItem(f"{dw} x {dh}"))
-            table.setItem(row, 3, QTableWidgetItem(f"x={x}, y={y}"))
-            table.setItem(row, 4, QTableWidgetItem(f"{int(det.detection_confidence * 100)}%"))
-            
-            # Status styling
-            status_item = QTableWidgetItem(det.recognition_status)
-            if det.recognition_status == "CONFIRMED":
-                status_item.setForeground(QColor("#30D158"))
-            elif det.recognition_status == "UNCERTAIN":
-                status_item.setForeground(QColor("#FF9F0A"))
-            else:
-                status_item.setForeground(QColor("#FF453A"))
-            table.setItem(row, 5, status_item)
+        self.table_tab2 = QTableWidget()
+        self.table_tab2.setColumnCount(9)
+        self.table_tab2.setHorizontalHeaderLabels([
+            "ID", "Bounding Box", "Kích thước", "Tỷ lệ (W/H)", "Det. Conf", "Crop Status", "Nhóm trùng", "Lý do loại", "Rank/Suit"
+        ])
+        self.table_tab2.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        tbl_layout.addWidget(self.table_tab2)
 
-            tag = det.card.unicode_name if det.card else "Chưa nhận diện"
-            table.setItem(row, 6, QTableWidgetItem(tag))
+        self._populate_tab2_table(0)
 
-        tbl_layout.addWidget(table)
         splitter.addWidget(table_box)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
 
         vbox.addWidget(splitter)
         return w
+
+    def _on_tab2_filter_changed(self, index: int) -> None:
+        self._populate_tab2_table(index)
+
+    def _populate_tab2_table(self, filter_idx: int) -> None:
+        self.table_tab2.setRowCount(0)
+        items: List[any] = []
+        if filter_idx == 0:
+            items = self.detected_cards
+        elif filter_idx == 1 and self.debug_info:
+            items = self.debug_info.duplicate_detections
+        elif filter_idx == 2 and self.debug_info:
+            items = self.debug_info.rejected_detections
+
+        self.table_tab2.setRowCount(len(items))
+        for row, item in enumerate(items):
+            det_id = getattr(item, "detection_id", f"#{row+1}")
+            bbox = getattr(item, "bbox", (0, 0, 0, 0))
+            x, y, dw, dh = bbox
+            aspect = round(dw / float(dh), 2) if dh > 0 else 0.0
+            det_conf = getattr(item, "detection_confidence", 0.0)
+            crop_st = getattr(item, "crop_status", "VALID_CARD_CROP")
+            dup_grp = getattr(item, "duplicate_group", "")
+            rej_reason = getattr(item, "rejection_reason", "")
+            
+            # Label/tag
+            if hasattr(item, "card") and item.card is not None:
+                tag = f"{item.card.unicode_name} ({int(item.confidence*100)}%)"
+            elif filter_idx == 1:
+                tag = "TRÙNG LẶP [Đã loại]"
+            else:
+                tag = f"LOẠI BỎ [{rej_reason or 'Non-card'}]"
+
+            self.table_tab2.setItem(row, 0, QTableWidgetItem(str(det_id)))
+            self.table_tab2.setItem(row, 1, QTableWidgetItem(f"({x}, {y}, {dw}, {dh})"))
+            self.table_tab2.setItem(row, 2, QTableWidgetItem(f"{dw} x {dh}"))
+            self.table_tab2.setItem(row, 3, QTableWidgetItem(str(aspect)))
+            self.table_tab2.setItem(row, 4, QTableWidgetItem(f"{int(det_conf * 100)}%"))
+            self.table_tab2.setItem(row, 5, QTableWidgetItem(str(crop_st)))
+            self.table_tab2.setItem(row, 6, QTableWidgetItem(str(dup_grp or "-")))
+            
+            rej_item = QTableWidgetItem(str(rej_reason or "-"))
+            if rej_reason:
+                rej_item.setForeground(QColor("#FF453A"))
+            self.table_tab2.setItem(row, 7, rej_item)
+
+            tag_item = QTableWidgetItem(tag)
+            if filter_idx == 0:
+                tag_item.setForeground(QColor("#30D158"))
+            elif filter_idx == 1:
+                tag_item.setForeground(QColor("#FF9F0A"))
+            else:
+                tag_item.setForeground(QColor("#FF453A"))
+            self.table_tab2.setItem(row, 8, tag_item)
 
     # =========================================================================
     # TAB 3: Individual Card Crop
@@ -287,13 +338,19 @@ class VisionDebugDialog(QDialog):
         tag = det.card.unicode_name if det.card else "Unknown"
         det_pct = int(det.detection_confidence * 100)
         rec_pct = int(det.confidence * 100)
+        crop_st = getattr(det, "crop_status", "VALID_CARD_CROP")
+        dup_grp = getattr(det, "duplicate_group", "") or "None"
+        rej_r = getattr(det, "rejection_reason", "") or "None"
         self.lbl_tab3_det_info.setText(
             f"<b>Lá bài:</b> {tag}<br>"
             f"<b>Detection ID:</b> {det.detection_id}<br>"
             f"<b>Detection Confidence:</b> {det_pct}%<br>"
             f"<b>Recognition Confidence:</b> {rec_pct}%<br>"
+            f"<b>Crop Status:</b> {crop_st}<br>"
             f"<b>Chồng lấp (Overlap):</b> {'Có' if det.is_overlapping else 'Không'}<br>"
             f"<b>Bị che khuất (Occluded):</b> {'Có' if det.is_partially_occluded else 'Không'}<br>"
+            f"<b>Nhóm trùng:</b> {dup_grp}<br>"
+            f"<b>Lý do loại (nếu có):</b> {rej_r}<br>"
             f"<b>Trạng thái:</b> {det.recognition_status}"
         )
 
