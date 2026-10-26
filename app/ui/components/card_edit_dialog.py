@@ -92,9 +92,9 @@ class CardEditDialog(QDialog):
 
         col_ref = QVBoxLayout()
         col_ref.setSpacing(2)
-        lbl_ref_tag = QLabel("Mẫu Đối Chiếu")
-        lbl_ref_tag.setStyleSheet("font-size: 10px; color: #30D158;")
-        col_ref.addWidget(lbl_ref_tag, alignment=Qt.AlignCenter)
+        self.lbl_ref_tag = QLabel("Mẫu Đối Chiếu")
+        self.lbl_ref_tag.setStyleSheet("font-size: 10px; color: #30D158;")
+        col_ref.addWidget(self.lbl_ref_tag, alignment=Qt.AlignCenter)
         self.lbl_matched_ref_img = QLabel()
         self.lbl_matched_ref_img.setAlignment(Qt.AlignCenter)
         self.lbl_matched_ref_img.setFixedSize(90, 128)
@@ -375,40 +375,66 @@ class CardEditDialog(QDialog):
         else:
             self.lbl_crop_img.setText("Không có ảnh crop")
 
-        # 2. Matched reference sample
-        ref_img = None
-        if self.detected_card.reference_crop is not None and self.detected_card.reference_crop.size > 0:
-            ref_img = self.detected_card.reference_crop
-        elif self.detected_card.matched_reference_id and self.reference_library:
-            ref_img = self.reference_library.get_reference_image(self.detected_card.matched_reference_id)
-        elif self.selected_card and self.reference_library:
-            code = f"{self.selected_card.rank.char}{self.selected_card.suit.char.upper()}"
-            refs = self.reference_library.get_references_for_card(code)
-            if refs:
-                ref_img = self.reference_library.get_reference_image(refs[0].id)
+        # 2. Dynamic reference sample for currently selected card
+        self._update_reference_preview_for_selected_card()
 
-        if ref_img is not None:
-            self._set_pixmap_to_label(self.lbl_matched_ref_img, ref_img, 88, 124)
-        else:
-            self.lbl_matched_ref_img.setText("Chưa có mẫu")
+        # 3. Dynamic Rank crop and Suit crop
+        if self.detected_card.raw_crop is not None and self.detected_card.raw_crop.size > 0:
+            d_rank, d_suit = CardReferenceLibrary.extract_dynamic_corner_patches(self.detected_card.raw_crop)
+            r_img = self.detected_card.rank_crop if (self.detected_card.rank_crop is not None and self.detected_card.rank_crop.size > 0) else d_rank
+            s_img = self.detected_card.suit_crop if (self.detected_card.suit_crop is not None and self.detected_card.suit_crop.size > 0) else d_suit
 
-        # 3. Rank crop
-        if self.detected_card.rank_crop is not None and self.detected_card.rank_crop.size > 0:
-            self._set_pixmap_to_label(self.lbl_rank_crop, self.detected_card.rank_crop, 42, 42)
-        elif self.detected_card.raw_crop is not None and self.detected_card.raw_crop.size > 0:
-            norm = cv2.resize(self.detected_card.raw_crop, (120, 168))
-            self._set_pixmap_to_label(self.lbl_rank_crop, norm[8:48, 8:44], 42, 42)
+            if r_img is not None and r_img.size > 0:
+                self._set_pixmap_to_label(self.lbl_rank_crop, r_img, 42, 42)
+            else:
+                self.lbl_rank_crop.setText("-")
+
+            if s_img is not None and s_img.size > 0:
+                self._set_pixmap_to_label(self.lbl_suit_crop, s_img, 42, 42)
+            else:
+                self.lbl_suit_crop.setText("-")
         else:
             self.lbl_rank_crop.setText("-")
-
-        # 4. Suit crop
-        if self.detected_card.suit_crop is not None and self.detected_card.suit_crop.size > 0:
-            self._set_pixmap_to_label(self.lbl_suit_crop, self.detected_card.suit_crop, 42, 42)
-        elif self.detected_card.raw_crop is not None and self.detected_card.raw_crop.size > 0:
-            norm = cv2.resize(self.detected_card.raw_crop, (120, 168))
-            self._set_pixmap_to_label(self.lbl_suit_crop, norm[46:82, 8:44], 42, 42)
-        else:
             self.lbl_suit_crop.setText("-")
+
+    def _update_reference_preview_for_selected_card(self) -> None:
+        """Dynamically updates the reference sample preview according to the currently selected card."""
+        if not self.selected_card or not self.reference_library:
+            self.lbl_matched_ref_img.setText("Chưa chọn bài")
+            self.lbl_matched_ref_img.setStyleSheet("background-color: #1C1C1E; border: 1px solid #3A3A3C; border-radius: 6px; color: #8E8E93;")
+            if hasattr(self, "lbl_ref_tag"):
+                self.lbl_ref_tag.setText("Mẫu Đối Chiếu")
+                self.lbl_ref_tag.setStyleSheet("font-size: 10px; color: #8E8E93;")
+            if hasattr(self, "lbl_ref_count"):
+                self.lbl_ref_count.setText("Thư viện mẫu: 0 mẫu")
+            return
+
+        code = f"{self.selected_card.rank.char}{self.selected_card.suit.char.upper()}"
+        refs = self.reference_library.get_references_for_card(code)
+
+        if refs:
+            ref_img = self.reference_library.get_reference_image(refs[0].id)
+            if ref_img is not None:
+                self._set_pixmap_to_label(self.lbl_matched_ref_img, ref_img, 88, 124)
+                self.lbl_matched_ref_img.setStyleSheet("background-color: #1C1C1E; border: 1px solid #30D158; border-radius: 6px;")
+                if hasattr(self, "lbl_ref_tag"):
+                    self.lbl_ref_tag.setText(f"Mẫu đối chiếu ({code})")
+                    self.lbl_ref_tag.setStyleSheet("font-size: 10px; color: #30D158; font-weight: 700;")
+                if hasattr(self, "lbl_ref_count"):
+                    self.lbl_ref_count.setText(f"Thư viện đã có: {len(refs)} mẫu của {code}")
+                    self.lbl_ref_count.setStyleSheet("font-size: 10px; color: #30D158;")
+                return
+
+        # No reference found for the selected card
+        self.lbl_matched_ref_img.clear()
+        self.lbl_matched_ref_img.setText(f"Chưa có mẫu\ncho {code}")
+        self.lbl_matched_ref_img.setStyleSheet("background-color: #1C1C1E; border: 1px dashed #8E8E93; border-radius: 6px; color: #8E8E93; font-size: 11px;")
+        if hasattr(self, "lbl_ref_tag"):
+            self.lbl_ref_tag.setText(f"Chưa có mẫu ({code})")
+            self.lbl_ref_tag.setStyleSheet("font-size: 10px; color: #8E8E93;")
+        if hasattr(self, "lbl_ref_count"):
+            self.lbl_ref_count.setText(f"Thư viện chưa có mẫu của {code}")
+            self.lbl_ref_count.setStyleSheet("font-size: 10px; color: #8E8E93;")
 
     @staticmethod
     def _set_pixmap_to_label(label: QLabel, img: np.ndarray, max_w: int, max_h: int) -> None:
@@ -492,13 +518,7 @@ class CardEditDialog(QDialog):
         self.selected_card = card
         self._update_selected_display()
         self._highlight_selected_card()
-
-        # Update reference count label
-        if self.reference_library:
-            code = f"{card.rank.char}{card.suit.char.upper()}"
-            refs = self.reference_library.get_references_for_card(code)
-            self.lbl_ref_count.setText(f"Thư viện đã có: {len(refs)} mẫu của {code}")
-            self.lbl_ref_count.setStyleSheet("font-size: 10px; color: #30D158;" if refs else "font-size: 10px; color: #8E8E93;")
+        self._update_reference_preview_for_selected_card()
 
     def _highlight_selected_card(self) -> None:
         """Applies highlight styling to the currently selected card button."""
@@ -536,13 +556,41 @@ class CardEditDialog(QDialog):
         self.accept()
 
     def _on_save_as_reference_clicked(self) -> None:
-        """Saves current crop to CardReferenceLibrary under the selected card."""
+        """Saves current crop to CardReferenceLibrary under the selected card with confirmation."""
         if not self.selected_card:
             QMessageBox.warning(self, "Chưa chọn lá bài", "Vui lòng chọn lá bài chính xác trước khi lưu làm ảnh mẫu.")
             return
 
         if self.detected_card is None or self.detected_card.raw_crop is None or self.detected_card.raw_crop.size == 0:
             QMessageBox.warning(self, "Không có ảnh", "Không tìm thấy ảnh crop để lưu làm mẫu.")
+            return
+
+        code = f"{self.selected_card.rank.char}{self.selected_card.suit.char.upper()}"
+
+        # Sanity check: verify with template engine if there is an extreme contradiction
+        from app.vision.template_engine import CardTemplateEngine
+        engine = CardTemplateEngine()
+        d_rank, _ = CardReferenceLibrary.extract_dynamic_corner_patches(self.detected_card.raw_crop)
+        v_rank, v_conf = engine.match_rank(cv2.cvtColor(d_rank, cv2.COLOR_BGR2GRAY))
+
+        warning_text = ""
+        if v_conf >= 0.80 and v_rank != self.selected_card.rank:
+            warning_text = (
+                f"\n\n⚠️ CẢNH BÁO XUNG ĐỘT NHÃN:\n"
+                f"Hình ảnh lá bài có đặc điểm của rank '{v_rank.char}' ({int(v_conf*100)}% khớp),\n"
+                f"nhưng bạn đang chọn lưu nhãn '{self.selected_card.unicode_name}' ({code}).\n"
+                f"Vui lòng kiểm tra lại để tránh lưu sai mẫu!"
+            )
+
+        confirm = QMessageBox.question(
+            self,
+            "Xác nhận lưu ảnh mẫu",
+            f"Bạn có chắc chắn muốn lưu ảnh crop này làm mẫu chuẩn cho lá bài:\n\n"
+            f"👉 {self.selected_card.unicode_name} ({code}) 👈"
+            f"{warning_text}",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
             return
 
         try:
@@ -555,11 +603,13 @@ class CardEditDialog(QDialog):
                 )
                 self.saved_as_reference = True
                 self.is_confirmed = True
+                self._update_reference_preview_for_selected_card()
                 QMessageBox.information(
                     self,
                     "Đã lưu ảnh mẫu",
                     f"Đã lưu thành công ảnh mẫu cho lá {self.selected_card.unicode_name} ({ref.card_code}).\n"
-                    f"Các lần quét tiếp theo sẽ tự động nhận diện chính xác lá bài này!",
+                    f"Thư viện hiện có {len(self.reference_library.get_references_for_card(code))} mẫu của lá này.\n"
+                    f"Các lần quét tiếp theo sẽ tự động nhận diện chính xác!",
                 )
                 self.accept()
         except Exception as e:
@@ -579,11 +629,11 @@ class CardEditDialog(QDialog):
         confirm = QMessageBox.question(
             self,
             "Xác nhận xóa mẫu",
-            f"Bạn có chắc chắn muốn xóa toàn bộ {len(existing)} ảnh mẫu đã lưu của lá {self.selected_card.unicode_name}?",
+            f"Bạn có chắc chắn muốn xóa toàn bộ {len(existing)} ảnh mẫu đã lưu của lá {self.selected_card.unicode_name} ({code})?",
             QMessageBox.Yes | QMessageBox.No,
         )
         if confirm == QMessageBox.Yes:
             count = self.reference_library.delete_references_for_card(code)
             self.deleted_reference = True
             QMessageBox.information(self, "Đã xóa", f"Đã xóa {count} ảnh mẫu của lá {code}.")
-            self._select_card(self.selected_card)
+            self._update_reference_preview_for_selected_card()

@@ -115,7 +115,9 @@ class TestUIComponents:
 
         # Save as reference
         from unittest.mock import patch
-        with patch("PySide6.QtWidgets.QMessageBox.information") as mock_info:
+        from PySide6.QtWidgets import QMessageBox
+        with patch("PySide6.QtWidgets.QMessageBox.information") as mock_info, \
+             patch("PySide6.QtWidgets.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes):
             dialog._on_save_as_reference_clicked()
             assert dialog.saved_as_reference is True
             assert dialog.is_confirmed is True

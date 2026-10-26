@@ -169,21 +169,25 @@ class CardRecognizer:
             )
 
         norm_img = crop.image
-        if crop.rank_crop is not None and crop.rank_crop.size > 0:
+        has_custom_corner = crop.corner_crop is not None and crop.corner_crop.size > 0
+
+        gray_corner = cv2.cvtColor(norm_img[0:105, 0:50], cv2.COLOR_BGR2GRAY) if (norm_img is not None and norm_img.shape[0] >= 105 and norm_img.shape[1] >= 50) else None
+        has_norm_corner = cv2.countNonZero(gray_corner < 240) > 20 if gray_corner is not None else False
+
+        if has_norm_corner:
+            d_rank, d_suit = self.reference_library.extract_dynamic_corner_patches(norm_img)
+            rank_crop = d_rank if (d_rank is not None and d_rank.size > 0) else norm_img[8:55, 6:46]
+            suit_crop = d_suit if (d_suit is not None and d_suit.size > 0) else norm_img[52:95, 6:46]
+        elif crop.rank_crop is not None and crop.rank_crop.size > 0 and crop.suit_crop is not None and crop.suit_crop.size > 0:
             rank_crop = crop.rank_crop
-        elif crop.corner_crop is not None and crop.corner_crop.size > 0:
+            suit_crop = crop.suit_crop
+        elif has_custom_corner:
             split_y = int(crop.corner_crop.shape[0] * 0.55)
             rank_crop = crop.corner_crop[0:split_y, :]
-        else:
-            rank_crop = norm_img[8:48, 8:44]
-
-        if crop.suit_crop is not None and crop.suit_crop.size > 0:
-            suit_crop = crop.suit_crop
-        elif crop.corner_crop is not None and crop.corner_crop.size > 0:
-            split_y = int(crop.corner_crop.shape[0] * 0.55)
             suit_crop = crop.corner_crop[split_y:, :]
         else:
-            suit_crop = norm_img[46:82, 8:44]
+            rank_crop = norm_img[8:55, 6:46] if norm_img is not None else np.zeros((47, 40, 3), dtype=np.uint8)
+            suit_crop = norm_img[52:95, 6:46] if norm_img is not None else np.zeros((43, 40, 3), dtype=np.uint8)
 
         # 1. Color discrimination: Red vs Black
         is_red = self.reference_library.check_image_is_red(suit_crop) or self.reference_library.check_image_is_red(rank_crop)
@@ -192,86 +196,85 @@ class CardRecognizer:
         q_rank_glyph = self.reference_library.extract_primary_glyph(rank_crop, (24, 36))
         q_suit_glyph = self.reference_library.extract_primary_glyph(suit_crop, (28, 28))
 
-        # 3. Query Confirmed Reference Library
+        # 3. Independent Rank Recognition (Part B: Decoupled from Suit)
+        algo_rank, algo_rank_conf = self._template_engine.match_rank(cv2.cvtColor(rank_crop, cv2.COLOR_BGR2GRAY))
+        ref_rank, ref_rank_score, _ = self.reference_library.match_rank_glyph(q_rank_glyph, min_score=0.68)
+
+        final_rank = None
+        final_rank_conf = 0.0
+
+        if ref_rank is not None and ref_rank_score >= 0.75:
+            final_rank = ref_rank
+            final_rank_conf = ref_rank_score
+        elif algo_rank is not None and algo_rank_conf >= 0.65:
+            final_rank = algo_rank
+            final_rank_conf = algo_rank_conf
+            if ref_rank == algo_rank and ref_rank_score >= 0.50:
+                final_rank_conf = min(0.99, (algo_rank_conf + ref_rank_score) / 2.0 + 0.10)
+        elif ref_rank is not None and ref_rank_score >= 0.68:
+            final_rank = ref_rank
+            final_rank_conf = ref_rank_score
+        else:
+            final_rank = algo_rank
+            final_rank_conf = algo_rank_conf
+
+        # 4. Independent Suit Recognition (Part B: Decoupled from Rank)
+        algo_suit, algo_suit_conf = self._template_engine.match_suit(cv2.cvtColor(suit_crop, cv2.COLOR_BGR2GRAY), is_red=is_red)
+        ref_suit, ref_suit_score, _ = self.reference_library.match_suit_glyph(q_suit_glyph, is_red=is_red, min_score=0.68)
+
+        final_suit = None
+        final_suit_conf = 0.0
+
+        if ref_suit is not None and ref_suit_score >= 0.75:
+            final_suit = ref_suit
+            final_suit_conf = ref_suit_score
+        elif algo_suit is not None and algo_suit_conf >= 0.65:
+            final_suit = algo_suit
+            final_suit_conf = algo_suit_conf
+            if ref_suit == algo_suit and ref_suit_score >= 0.50:
+                final_suit_conf = min(0.99, (algo_suit_conf + ref_suit_score) / 2.0 + 0.10)
+        elif ref_suit is not None and ref_suit_score >= 0.68:
+            final_suit = ref_suit
+            final_suit_conf = ref_suit_score
+        else:
+            final_suit = algo_suit
+            final_suit_conf = algo_suit_conf
+
+        # 5. Full Card Reference Matching & Validation
         ref_match = self.reference_library.match_crop(
             crop_image=crop.image,
             corner_crop=crop.corner_crop,
             rank_crop=rank_crop,
             suit_crop=suit_crop,
-            min_confidence=0.55,
+            min_confidence=0.68,
         )
-        ref_rank, ref_rank_score, _ = self.reference_library.match_rank_glyph(q_rank_glyph)
-        ref_suit, ref_suit_score, _ = self.reference_library.match_suit_glyph(q_suit_glyph, is_red=is_red)
 
-        # 4. Query Algorithmic Pipeline
-        algo_rank, algo_rank_conf = self._template_engine.match_rank(cv2.cvtColor(rank_crop, cv2.COLOR_BGR2GRAY))
-        algo_suit, algo_suit_conf = self._template_engine.match_suit(cv2.cvtColor(suit_crop, cv2.COLOR_BGR2GRAY), is_red=is_red)
-
-        # 5. Fuse Predictions with Priority for Confirmed Reference Library
         is_ref_match = False
         matched_ref_id = None
         matched_similarity = 0.0
         ref_crop_img = None
         alternatives: List[Tuple[str, float]] = []
 
-        final_rank = None
-        final_suit = None
-        final_rank_conf = 0.0
-        final_suit_conf = 0.0
-
         if ref_match is not None:
             alternatives = list(ref_match.alternative_candidates)
-            matched_similarity = ref_match.score
-
-            # Priority 1: Ground-truth user-confirmed reference match (score >= 0.65)
-            if ref_match.score >= 0.65 and ref_match.card is not None:
-                final_rank = ref_match.card.rank
-                final_suit = ref_match.card.suit
-                final_rank_conf = max(0.85, ref_match.rank_score, ref_match.score)
-                final_suit_conf = max(0.85, ref_match.suit_score, ref_match.score)
+            # CRITICAL ARCHITECTURAL CONSTRAINT (Part B, C, G):
+            # A reference match is ONLY accepted as ground truth if its rank and suit
+            # EXACTLY MATCH the independently recognized rank and suit, with high scores!
+            # Under NO CIRCUMSTANCES can a sample of 9D change an image of QD into 9D!
+            if (
+                ref_match.card is not None
+                and ref_match.card.rank == final_rank
+                and ref_match.card.suit == final_suit
+                and ref_match.rank_score >= 0.70
+                and ref_match.suit_score >= 0.70
+                and ref_match.score >= 0.70
+            ):
                 is_ref_match = True
                 matched_ref_id = ref_match.reference_id
+                matched_similarity = ref_match.score
                 ref_crop_img = self.reference_library.get_reference_image(ref_match.reference_id)
-            elif ref_match.is_confident and ref_match.card is not None:
-                final_rank = ref_match.card.rank
-                final_suit = ref_match.card.suit
-                final_rank_conf = max(0.88, ref_match.rank_score)
-                final_suit_conf = max(0.88, ref_match.suit_score)
-                is_ref_match = True
-                matched_ref_id = ref_match.reference_id
-                ref_crop_img = self.reference_library.get_reference_image(ref_match.reference_id)
-
-        if not is_ref_match:
-            # Fallback to independent rank & suit fusion
-            if ref_rank is not None and ref_rank_score >= 0.68:
-                final_rank = ref_rank
-                final_rank_conf = ref_rank_score
-            elif ref_rank is not None and ref_rank == algo_rank:
-                final_rank = ref_rank
-                final_rank_conf = min(0.99, (ref_rank_score + algo_rank_conf) / 2.0 + 0.10)
-            elif ref_rank is not None and ref_rank_score > algo_rank_conf:
-                final_rank = ref_rank
-                final_rank_conf = ref_rank_score
-            else:
-                final_rank = algo_rank
-                final_rank_conf = algo_rank_conf
-
-            if ref_suit is not None and ref_suit_score >= 0.68:
-                final_suit = ref_suit
-                final_suit_conf = ref_suit_score
-            elif ref_suit is not None and ref_suit == algo_suit:
-                final_suit = ref_suit
-                final_suit_conf = min(0.99, (ref_suit_score + algo_suit_conf) / 2.0 + 0.10)
-            elif ref_suit is not None and ref_suit_score > algo_suit_conf:
-                final_suit = ref_suit
-                final_suit_conf = ref_suit_score
-            else:
-                final_suit = algo_suit
-                final_suit_conf = algo_suit_conf
-
-            if ref_rank is not None and ref_suit is not None:
-                if ref_rank == final_rank and ref_suit == final_suit and ref_rank_score >= 0.70 and ref_suit_score >= 0.70:
-                    is_ref_match = True
+                final_rank_conf = max(final_rank_conf, ref_match.rank_score)
+                final_suit_conf = max(final_suit_conf, ref_match.suit_score)
 
         # 6. Compute overall confidence and uncertainty
         card = Card(final_rank, final_suit) if (final_rank and final_suit) else None

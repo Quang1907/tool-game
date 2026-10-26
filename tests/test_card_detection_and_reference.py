@@ -472,3 +472,142 @@ class TestDeduplicationAndCropValidation:
         assert dialog is not None
         assert dialog.table_image is not None
         dialog.close()
+
+
+def make_card_crop_image(rank: Rank, suit: Suit) -> np.ndarray:
+    """Helper to synthesize clean card crop for rank and suit discrimination tests."""
+    from app.vision.template_engine import CardTemplateEngine
+    engine = CardTemplateEngine()
+    img = np.full((168, 120, 3), 245, dtype=np.uint8)
+    r_bm = engine._render_char_bitmap(rank.char, 28, engine._font_path)
+    rh, rw = r_bm.shape
+    is_red = suit in (Suit.HEARTS, Suit.DIAMONDS)
+    color = (25, 25, 210) if is_red else (20, 20, 20)
+    for c in range(3):
+        img[12 : 12 + rh, 12 : 12 + rw, c] = np.where(r_bm > 128, color[c], 245)
+    s_bm = engine._draw_geometric_suit(suit, 26)
+    sh, sw = s_bm.shape
+    for c in range(3):
+        img[50 : 50 + sh, 12 : 12 + sw, c] = np.where(s_bm > 128, color[c], 245)
+    return img
+
+
+class TestRankSuitDecouplingAndReferenceIntegrity:
+    """Rigorous tests proving that Rank and Suit are decoupled, that Q♦ is never
+    confused with 9♦, that reference matching does not cross-pollinate ranks,
+    and that reference samples persist across reloads.
+    """
+
+    def test_same_suit_different_rank_discrimination_qd_vs_9d(self, isolated_lib):
+        """Proof that Q♦ is recognized as Q♦ even when library contains 9♦, for all 4 suits."""
+        # 1. Add 9D to isolated library
+        img_9d = make_card_crop_image(Rank.NINE, Suit.DIAMONDS)
+        isolated_lib.add_reference(img_9d, Card(Rank.NINE, Suit.DIAMONDS))
+
+        # 2. Query Q♦
+        img_qd = make_card_crop_image(Rank.QUEEN, Suit.DIAMONDS)
+        crop_qd = CardCrop(
+            bbox=(0, 0, 120, 168),
+            image=img_qd,
+            corner_crop=img_qd[0:70, 0:50],
+        )
+        recognizer = CardRecognizer(reference_library=isolated_lib)
+        detected = recognizer.recognize_crop(crop_qd)
+
+        # Must strictly be Q♦, NEVER 9♦
+        assert detected.card == Card(Rank.QUEEN, Suit.DIAMONDS)
+        assert detected.card_code == "QD"
+        assert detected.rank_char == "Q"
+        assert detected.suit_char == "D"
+        assert detected.card_code != "9D"
+
+        # Test other suits: 9H vs QH, 9S vs QS, 9C vs QC
+        for rank_nine, rank_queen, suit in [
+            (Rank.NINE, Rank.QUEEN, Suit.HEARTS),
+            (Rank.NINE, Rank.QUEEN, Suit.SPADES),
+            (Rank.NINE, Rank.QUEEN, Suit.CLUBS),
+        ]:
+            isolated_lib.add_reference(make_card_crop_image(rank_nine, suit), Card(rank_nine, suit))
+            img_q = make_card_crop_image(rank_queen, suit)
+            crop_q = CardCrop(bbox=(0, 0, 120, 168), image=img_q, corner_crop=img_q[0:70, 0:50])
+            det_q = recognizer.recognize_crop(crop_q)
+            assert det_q.card == Card(rank_queen, suit)
+            assert det_q.rank_char == "Q"
+            assert det_q.suit_char == suit.char.upper()
+
+    def test_same_rank_different_suit_discrimination(self, isolated_lib):
+        """Proof that cards with same rank (Q) but different suits (♦, ♥, ♠, ♣) are distinct."""
+        recognizer = CardRecognizer(reference_library=isolated_lib)
+        for s in [Suit.DIAMONDS, Suit.HEARTS, Suit.SPADES, Suit.CLUBS]:
+            img = make_card_crop_image(Rank.QUEEN, s)
+            crop = CardCrop(bbox=(0, 0, 120, 168), image=img, corner_crop=img[0:70, 0:50])
+            det = recognizer.recognize_crop(crop)
+            assert det.card == Card(Rank.QUEEN, s)
+            assert det.rank_char == "Q"
+            assert det.suit_char == s.char.upper()
+
+    def test_user_confirmed_qd_reference_persistence_and_matching(self, temp_ref_dir):
+        """Saving Q♦ reference, reloading library, and recognizing a new Q♦ with high confidence."""
+        ref_dir, db_path = temp_ref_dir
+        db = DatabaseManager(str(db_path))
+        lib1 = CardReferenceLibrary(db_manager=db, storage_dir=ref_dir)
+
+        # Save 9D and QD
+        img_9d = make_card_crop_image(Rank.NINE, Suit.DIAMONDS)
+        img_qd = make_card_crop_image(Rank.QUEEN, Suit.DIAMONDS)
+        lib1.add_reference(img_9d, Card(Rank.NINE, Suit.DIAMONDS))
+        ref_qd = lib1.add_reference(img_qd, Card(Rank.QUEEN, Suit.DIAMONDS))
+
+        # Reload library from database (simulating app restart)
+        lib2 = CardReferenceLibrary(db_manager=db, storage_dir=ref_dir)
+        assert len(lib2.get_references_for_card("QD")) == 1
+        assert len(lib2.get_references_for_card("9D")) == 1
+
+        # Query new Q♦
+        rec = CardRecognizer(reference_library=lib2)
+        crop = CardCrop(bbox=(0, 0, 120, 168), image=img_qd, corner_crop=img_qd[0:70, 0:50])
+        det = rec.recognize_crop(crop)
+
+        assert det.card == Card(Rank.QUEEN, Suit.DIAMONDS)
+        assert det.is_reference_match is True
+        assert det.matched_reference_id == ref_qd.id
+        assert det.overall_confidence >= 0.85
+
+    def test_card_edit_dialog_dynamic_reference_preview(self, isolated_lib):
+        """Verifies that CardEditDialog switches reference preview dynamically when selecting cards."""
+        from PySide6.QtWidgets import QApplication
+        from app.ui.components.card_edit_dialog import CardEditDialog
+
+        app = QApplication.instance() or QApplication([])
+
+        # Add 9D to library (no QD)
+        img_9d = make_card_crop_image(Rank.NINE, Suit.DIAMONDS)
+        isolated_lib.add_reference(img_9d, Card(Rank.NINE, Suit.DIAMONDS))
+
+        img_qd = make_card_crop_image(Rank.QUEEN, Suit.DIAMONDS)
+        det_qd = DetectedCard(
+            card=Card(Rank.QUEEN, Suit.DIAMONDS),
+            confidence=0.95,
+            bbox=(0, 0, 120, 168),
+            raw_crop=img_qd,
+            rank_crop=img_qd[10:65, 6:45],
+            suit_crop=img_qd[70:105, 9:42],
+        )
+
+        dlg = CardEditDialog(
+            detected_card=det_qd,
+            reference_library=isolated_lib,
+        )
+
+        # Since QD has no reference samples yet, preview should indicate no samples for QD
+        assert "Chưa có mẫu" in dlg.lbl_ref_tag.text()
+
+        # When user selects 9D: preview should update to show 9D
+        dlg._select_card(Card(Rank.NINE, Suit.DIAMONDS))
+        assert "9D" in dlg.lbl_ref_tag.text()
+
+        # When user selects QD: preview switches back to QD
+        dlg._select_card(Card(Rank.QUEEN, Suit.DIAMONDS))
+        assert "QD" in dlg.lbl_ref_tag.text()
+
+        dlg.close()

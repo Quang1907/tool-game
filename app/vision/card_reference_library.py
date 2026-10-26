@@ -199,8 +199,79 @@ class CardReferenceLibrary:
 
         return cv2.resize(glyph, target_size, interpolation=cv2.INTER_AREA)
 
+    @classmethod
+    def extract_dynamic_corner_patches(
+        cls, card_bgr: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Extracts Rank patch and Suit patch dynamically using connected components
+        in the top-left index area of a normalized (120, 168) card.
+        Avoids hardcoded slicing that truncates tall characters (e.g. Q, K, 10).
+        """
+        if card_bgr is None or card_bgr.size == 0:
+            return np.zeros((40, 36, 3), dtype=np.uint8), np.zeros((36, 36, 3), dtype=np.uint8)
+
+        h, w = card_bgr.shape[:2]
+        if (w, h) != (120, 168):
+            norm = cv2.resize(card_bgr, (120, 168), interpolation=cv2.INTER_AREA)
+        else:
+            norm = card_bgr
+
+        # Top-left index search area
+        corner = norm[0:105, 0:50]
+        gray = cv2.cvtColor(corner, cv2.COLOR_BGR2GRAY)
+
+        # Clean green selection borders
+        hsv = cv2.cvtColor(corner, cv2.COLOR_BGR2HSV)
+        is_green = (hsv[:, :, 0] >= 35) & (hsv[:, :, 0] <= 85) & (hsv[:, :, 1] > 50)
+        gray[is_green] = 245
+
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(thresh)
+
+        valid_comps = []
+        for i in range(1, num_labels):
+            x, y, cw, ch, area = stats[i]
+            # Must be a reasonable glyph size and within left half
+            if area > 35 and cw < 45 and ch < 80 and x < 40 and y < 95:
+                valid_comps.append((x, y, cw, ch, area))
+
+        # Sort top-to-bottom by vertical start position y
+        valid_comps.sort(key=lambda c: c[1])
+
+        # Fallback default slices if components cannot be clearly segmented
+        rank_patch = norm[8:55, 6:46]
+        suit_patch = norm[52:95, 6:46]
+
+        if len(valid_comps) >= 2:
+            rx, ry, rw, rh, _ = valid_comps[0]
+            sx, sy, sw, sh, _ = valid_comps[1]
+
+            r_y1 = max(0, ry - 3)
+            r_y2 = min(105, ry + rh + 3)
+            r_x1 = max(0, rx - 3)
+            r_x2 = min(50, rx + rw + 3)
+            rank_patch = corner[r_y1:r_y2, r_x1:r_x2]
+
+            s_y1 = max(0, sy - 3)
+            s_y2 = min(105, sy + sh + 3)
+            s_x1 = max(0, sx - 3)
+            s_x2 = min(50, sx + sw + 3)
+            suit_patch = corner[s_y1:s_y2, s_x1:s_x2]
+
+        elif len(valid_comps) == 1:
+            rx, ry, rw, rh, _ = valid_comps[0]
+            if ry < 45:
+                r_y1 = max(0, ry - 3)
+                r_y2 = min(105, ry + rh + 3)
+                r_x1 = max(0, rx - 3)
+                r_x2 = min(50, rx + rw + 3)
+                rank_patch = corner[r_y1:r_y2, r_x1:r_x2]
+                suit_patch = corner[min(100, ry + rh):min(105, ry + rh + 40), max(0, rx - 3):min(50, rx + rw + 3)]
+
+        return rank_patch, suit_patch
+
     def match_rank_glyph(
-        self, query_glyph: np.ndarray
+        self, query_glyph: np.ndarray, min_score: float = 0.65
     ) -> Tuple[Optional[Rank], float, Optional[str]]:
         """Matches a query rank glyph (24x36) against all cached reference rank glyphs."""
         if not self._cache or query_glyph is None or query_glyph.size == 0 or cv2.countNonZero(query_glyph) < 10:
@@ -220,10 +291,13 @@ class CardReferenceLibrary:
                 best_rank = ref.card.rank
                 best_ref_id = ref.ref_id
 
+        if best_score < min_score:
+            return None, max(0.0, best_score), None
+
         return best_rank, max(0.0, best_score), best_ref_id
 
     def match_suit_glyph(
-        self, query_glyph: np.ndarray, is_red: bool
+        self, query_glyph: np.ndarray, is_red: bool, min_score: float = 0.65
     ) -> Tuple[Optional[Suit], float, Optional[str]]:
         """Matches a query suit glyph (28x28) against all cached reference suit glyphs with matching color."""
         if not self._cache or query_glyph is None or query_glyph.size == 0 or cv2.countNonZero(query_glyph) < 10:
@@ -244,6 +318,9 @@ class CardReferenceLibrary:
                 best_score = score
                 best_suit = ref.card.suit
                 best_ref_id = ref.ref_id
+
+        if best_score < min_score:
+            return None, max(0.0, best_score), None
 
         return best_suit, max(0.0, best_score), best_ref_id
 
@@ -453,14 +530,38 @@ class CardReferenceLibrary:
         corner_gray = cv2.cvtColor(corner_norm, cv2.COLOR_BGR2GRAY)
 
         # Dedicated rank & suit crops and isolated glyphs
-        rank_crop = norm_card[8:48, 8:44]
-        suit_crop = norm_card[46:82, 8:44]
+        d_rank, d_suit = self.extract_dynamic_corner_patches(norm_card)
+        rank_crop = d_rank if (d_rank is not None and d_rank.size > 0) else norm_card[8:55, 6:46]
+        suit_crop = d_suit if (d_suit is not None and d_suit.size > 0) else norm_card[52:95, 6:46]
         rank_glyph = self.extract_primary_glyph(rank_crop, (24, 36))
         suit_glyph = self.extract_primary_glyph(suit_crop, (28, 28))
 
+        # Automated Reference Data Integrity & Healing:
+        # Detect if stored reference sample has a flagrant visual mismatch against its stored label
+        # (e.g. sample stored as 9D, but visual rank is clearly Queen with high confidence >= 0.85).
+        from app.vision.template_engine import CardTemplateEngine
+        if not hasattr(self, "_label_verifier") or self._label_verifier is None:
+            self._label_verifier = CardTemplateEngine()
+
+        v_rank, v_conf = self._label_verifier.match_rank(cv2.cvtColor(rank_crop, cv2.COLOR_BGR2GRAY))
+        if v_conf >= 0.85 and v_rank != card.rank:
+            # Self-healing: Update SQLite record and card code to true visual rank!
+            correct_code = f"{v_rank.char}{card.suit.char.upper()}"
+            card = Card(v_rank, card.suit)
+            ref.card_code = correct_code
+            ref.rank = v_rank.char
+            try:
+                with self.db.get_connection() as conn:
+                    conn.execute(
+                        "UPDATE card_references SET card_code = ?, rank = ? WHERE id = ?",
+                        (correct_code, v_rank.char, ref.id),
+                    )
+            except Exception:
+                pass
+
         dhash_hex = ref.image_hash or self.compute_dhash(img)
         dhash_int = int(dhash_hex, 16) if dhash_hex else 0
-        is_red = self.is_red_suit(suit)
+        is_red = self.is_red_suit(card.suit)
 
         cached = _CachedReference(
             ref_id=ref.id,
@@ -488,6 +589,7 @@ class CardReferenceLibrary:
     ) -> Optional[CardReferenceMatch]:
         """Matches a query card crop against the library using multi-scale normalized cross-correlation
         across isolated rank glyph, suit glyph, corner index, and full layout.
+        Strictly enforces that Rank and Suit must both match independently.
         """
         if not self._cache or crop_image is None or crop_image.size == 0:
             return None
@@ -509,10 +611,12 @@ class CardReferenceLibrary:
             cw = max(8, int(qw * 0.45))
             qc = crop_image[0:ch, 0:cw]
 
-        if rank_crop is None or rank_crop.size == 0:
-            rank_crop = q_norm[8:48, 8:44]
-        if suit_crop is None or suit_crop.size == 0:
-            suit_crop = q_norm[46:82, 8:44]
+        if rank_crop is None or rank_crop.size == 0 or suit_crop is None or suit_crop.size == 0:
+            d_rank, d_suit = self.extract_dynamic_corner_patches(q_norm)
+            if rank_crop is None or rank_crop.size == 0:
+                rank_crop = d_rank
+            if suit_crop is None or suit_crop.size == 0:
+                suit_crop = d_suit
 
         q_rank_glyph = self.extract_primary_glyph(rank_crop, (24, 36))
         q_suit_glyph = self.extract_primary_glyph(suit_crop, (28, 28))
@@ -532,7 +636,7 @@ class CardReferenceLibrary:
         card_best_scores: Dict[str, Tuple[float, Card, str, float, float, str]] = {}  # card_code -> (score, Card, ref_id, r_score, s_score, image_path)
 
         for ref in self._cache:
-            color_penalty = 1.0 if query_is_red == ref.is_red else 0.50
+            color_penalty = 1.0 if query_is_red == ref.is_red else 0.10
 
             # Rank glyph NCC
             if has_rank_glyph and cv2.countNonZero(ref.rank_glyph) >= 10:
@@ -562,8 +666,18 @@ class CardReferenceLibrary:
             res_full = cv2.matchTemplate(q_full_gray, ref.full_gray, cv2.TM_CCOEFF_NORMED)
             score_full = max(0.0, float(res_full[0][0]))
 
-            # Weighted combination (40% rank, 35% suit, 15% corner, 10% full)
-            raw_score = (score_rank * 0.40 + score_suit * 0.35 + score_corner * 0.15 + score_full * 0.10) * color_penalty
+            # Base score with 45% rank, 40% suit, 10% corner, 5% full
+            raw_score = (score_rank * 0.45 + score_suit * 0.40 + score_corner * 0.10 + score_full * 0.05) * color_penalty
+
+            # Strict Gating: If rank glyph does NOT match this reference (< 0.68), penalize heavily!
+            # Two cards with different ranks CANNOT match!
+            if has_rank_glyph and score_rank < 0.68:
+                raw_score *= max(0.05, (score_rank / 0.68) ** 3)
+
+            # Strict Gating: If suit glyph does NOT match this reference (< 0.68), penalize heavily!
+            if has_suit_glyph and score_suit < 0.68:
+                raw_score *= max(0.05, (score_suit / 0.68) ** 3)
+
             final_score = min(0.99, max(0.0, raw_score))
 
             if ref.card_code not in card_best_scores or final_score > card_best_scores[ref.card_code][0]:
@@ -584,9 +698,14 @@ class CardReferenceLibrary:
         if top_score < min_confidence:
             return None
 
-        # Confidence criteria: score >= 0.80 or (score >= 0.68 with margin >= 0.03 over runner-up)
+        # Confidence criteria: overall score >= 0.75, both rank and suit scores >= 0.70, and solid margin
         second_score = sorted_candidates[1][1] if len(sorted_candidates) > 1 else 0.0
-        is_confident = (top_score >= 0.80) or ((top_score >= 0.68) and ((top_score - second_score) >= 0.03))
+        is_confident = (
+            (top_score >= 0.75)
+            and (top_rank_score >= 0.70)
+            and (top_suit_score >= 0.70)
+            and ((top_score - second_score) >= 0.03 or top_score >= 0.82)
+        )
 
         alternatives = [(c[0], round(c[1], 3)) for c in sorted_candidates[1:4]]
 
