@@ -1,0 +1,70 @@
+# CHANGELOG — BINH 13 ANALYZER (macOS)
+
+Tất cả các thay đổi đáng chú ý của dự án được ghi chép tại đây theo định dạng [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+---
+
+## [1.2.0] — 2026-10-26
+
+### Added
+- **AI Master Engineer System:**
+  - Thiết lập thư mục `.ai/` quản lý toàn diện tri thức, kiến trúc, trạng thái, quy tắc và lộ trình phát triển.
+  - Tạo `MASTER_CONTEXT.md` đóng vai trò bản đồ điều hướng cho mọi phiên AI tương lai.
+  - Tạo `GEMINI.md` định hướng cho Gemini Agent.
+  - Cập nhật `AGENTS.md` tương thích với cơ chế phân vai kỹ thuật.
+  - Tạo các tài liệu quản lý trạng thái: `CURRENT_STATE.md`, `ACTIVE_TASK.md`, `NEXT_ACTIONS.md`, `KNOWN_ISSUES.md`, `TEST_STATUS.md`.
+  - Tạo tài liệu quy trình: `SESSION_WORKFLOW.md`, `CHANGE_APPROVAL_POLICY.md`.
+  - Tạo tài liệu chi tiết từng phân hệ: `CORE_DOMAIN.md`, `VISION_PIPELINE.md`, `UI_PRESENTATION.md`, `DATABASE_PERSISTENCE.md`, `SERVICES_ORCHESTRATION.md`.
+
+---
+
+## [1.1.2] — 2026-10-26
+
+### Fixed
+- **Khắc phục lỗi False Positive Avatar người chơi bị nhận diện thành `K♦ 50% UNCERTAIN`:**
+  - Thêm Candidate Validation trong `CardDetector.validate_crop()`: Loại bỏ các contour avatar hình tròn (độ tròn $> 0.65$), khối vuông $0.82 \le w/h \le 1.28$ có độ trắng $< 50\%$, và nút bấm UI có độ bão hòa màu cao.
+  - Cập nhật `CardRecognizer.recognize_crop()`: Trả về `card=None, confidence=0.0` ngay khi phát hiện `NON_CARD_OBJECT` hoặc góc bài thiếu nền trắng ($< 35\%$), không đoán mò.
+- **Khắc phục lỗi 13 nút Rank trong dialog bị trống (khối xanh không chữ):**
+  - Khắc phục xung đột CSS: Nút Rank kích thước $36 \times 30\text{ px}$ được ghi đè inline `padding: 0; font-size: 12px; font-weight: 600; color: #FFFFFF` để tránh bị padding toàn cục $16\text{px}$ đẩy mất chữ.
+  - Sắp xếp 13 nút Rank đúng thứ tự: `A, 2, 3, 4, 5, 6, 7, 8, 9, 10, J, Q, K`.
+  - Đảm bảo tính độc lập: Chọn Rank giữ nguyên Suit hiện tại; chọn Suit giữ nguyên Rank hiện tại.
+- **Đồng bộ tọa độ crop:**
+  - Trích xuất `raw_patch` từ frame gốc của bàn chơi; gán `raw_crop=source_crop` trong `DetectedCard`.
+  - Cập nhật `VisionDebugDialog` hiển thị tọa độ Bbox ảnh gốc, kích thước crop, kích thước Rank/Suit crop và trạng thái validation.
+- **An toàn thư viện mẫu:**
+  - Chặn tuyệt đối việc lưu ảnh avatar / non-card vào `CardReferenceLibrary`.
+
+### Added
+- Bổ sung `TestMandatoryVerificationTestSuite` trong `tests/test_card_detection_and_reference.py` kiểm chứng Test A (Avatar), Test B (Nút Rank), Test C (Nút Suit), Test D (Tọa độ crop), Test E (An toàn xác nhận mẫu).
+
+---
+
+## [1.1.1] — 2026-10-25
+
+### Added
+- Tách biệt nhận diện Rank và Suit độc lập (`extract_dynamic_corner_patches` qua Connected Components).
+- Xây dựng Thư viện ảnh mẫu đã xác nhận (`CardReferenceLibrary`) lưu trong SQLite.
+- Thêm `CardEditDialog` cho phép người dùng xác nhận và sửa bài trực quan.
+- Thêm `VisionDebugDialog` với 4 tab chẩn đoán chuyên sâu.
+- Thêm `ZoomableImageViewer` hỗ trợ zoom, pan và click vào bounding box bài.
+
+---
+
+## [1.1.0] — 2026-10-25
+
+### Added
+- Hỗ trợ giám sát 3 cửa sổ bàn chơi game đồng thời trên một màn hình MacBook.
+- Cơ chế 1-frame chụp chung, crop 3 ROI độc lập qua `ROIManager`.
+- Bộ theo dõi quân bài `CardTracker` bất biến vị trí (`position_invariant_hash`), không tính lại solver khi bài chỉ di chuyển.
+
+---
+
+## [1.0.0] — 2026-10-25
+
+### Added
+- Khởi tạo kiến trúc Clean Architecture 5 tầng.
+- Mô hình hóa bài (`card.py`), bộ đánh giá (`evaluator.py`), luật tính điểm (`rules.py`).
+- Thuật toán phân rã tổ hợp 36,036 thế bài (`solver.py`).
+- Bộ mô phỏng Monte Carlo tối ưu EV với Common Random Numbers (`simulator.py`, `ev_optimizer.py`).
+- Giao diện PySide6 Dark Theme Apple HIG (`app/ui/main_window.py`).
+- Lưu trữ phiên chơi vào SQLite cục bộ (`app/database/`).
