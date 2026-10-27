@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 from pathlib import Path
 from typing import Optional
 import cv2
@@ -23,6 +24,106 @@ from PySide6.QtWidgets import (
 from app.core.card import Card, Rank, Suit
 from app.vision.card_recognizer import DetectedCard
 from app.vision.card_reference_library import CardReferenceLibrary
+
+logger = logging.getLogger(__name__)
+
+
+class CardContradictionDialog(QDialog):
+    """Modal inspection dialog displayed when user's selected card rank strongly contradicts
+    the detected visual rank features, preventing accidental mislabeled references.
+    """
+
+    def __init__(
+        self,
+        card_crop: np.ndarray,
+        rank_crop: Optional[np.ndarray],
+        selected_card: Card,
+        predicted_rank: Rank,
+        confidence: float,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Cảnh báo xung đột nhận diện lá bài")
+        self.resize(520, 360)
+        self.setStyleSheet("background-color: #1C1C1E; color: #FFFFFF;")
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        layout.setContentsMargins(18, 18, 18, 18)
+
+        # Header warning banner
+        title_box = QHBoxLayout()
+        lbl_warn_icon = QLabel("⚠️")
+        lbl_warn_icon.setStyleSheet("font-size: 28px;")
+        title_box.addWidget(lbl_warn_icon)
+
+        lbl_title = QLabel("Cảnh báo: Nhãn chọn không khớp với hình ảnh nhận diện!")
+        lbl_title.setStyleSheet("font-size: 14px; font-weight: 700; color: #FF9F0A;")
+        lbl_title.setWordWrap(True)
+        title_box.addWidget(lbl_title, stretch=1)
+        layout.addLayout(title_box)
+
+        # Content: Side-by-side card preview & comparison
+        content_box = QHBoxLayout()
+        content_box.setSpacing(16)
+
+        # Left: Actual crop & rank crop
+        crops_layout = QVBoxLayout()
+        crops_layout.setAlignment(Qt.AlignCenter)
+        lbl_card = QLabel()
+        CardEditDialog._set_pixmap_to_label(lbl_card, card_crop, 100, 140)
+        lbl_card.setStyleSheet("border: 1px solid #3A3A3C; border-radius: 6px;")
+        crops_layout.addWidget(lbl_card, alignment=Qt.AlignCenter)
+
+        if rank_crop is not None and rank_crop.size > 0:
+            lbl_r = QLabel()
+            CardEditDialog._set_pixmap_to_label(lbl_r, rank_crop, 40, 50)
+            lbl_r.setStyleSheet("border: 1px solid #FF9F0A; border-radius: 4px;")
+            crops_layout.addWidget(lbl_r, alignment=Qt.AlignCenter)
+            lbl_r_tag = QLabel("Vùng Rank Crop")
+            lbl_r_tag.setStyleSheet("font-size: 10px; color: #8E8E93;")
+            crops_layout.addWidget(lbl_r_tag, alignment=Qt.AlignCenter)
+
+        content_box.addLayout(crops_layout)
+
+        # Right: Detail texts
+        detail_layout = QVBoxLayout()
+        detail_layout.setSpacing(8)
+
+        sel_code = f"{selected_card.rank.char}{selected_card.suit.char.upper()}"
+        lbl_info = QLabel(
+            f"• <b>Bạn đang chọn:</b> <font color='#0A84FF'>{selected_card.unicode_name} ({sel_code})</font><br>"
+            f"• <b>Hệ thống nhận diện rank:</b> <font color='#FF453A'>Rank {predicted_rank.char} ({int(confidence * 100)}% tin cậy)</font><br><br>"
+            f"Việc lưu sai nhãn bài vào thư viện mẫu có thể khiến hệ thống "
+            f"nhận diện nhầm lẫn các ván bài tiếp theo.<br><br>"
+            f"Bạn có chắc chắn muốn lưu ảnh này làm mẫu cho <b>{selected_card.unicode_name} ({sel_code})</b> không?"
+        )
+        lbl_info.setWordWrap(True)
+        lbl_info.setStyleSheet("font-size: 12px; color: #E5E5EA; line-height: 1.4;")
+        detail_layout.addWidget(lbl_info)
+        content_box.addLayout(detail_layout, stretch=1)
+
+        layout.addLayout(content_box)
+
+        # Action buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+
+        btn_cancel = QPushButton("❌ Hủy & Chọn lại")
+        btn_cancel.setStyleSheet(
+            "background-color: #2C2C2E; color: #FFFFFF; font-weight: 600; padding: 8px 16px; border-radius: 6px;"
+        )
+        btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(btn_cancel)
+
+        btn_proceed = QPushButton("⚠️ Vẫn lưu làm ảnh mẫu")
+        btn_proceed.setStyleSheet(
+            "background-color: #FF9F0A; color: #000000; font-weight: 700; padding: 8px 16px; border-radius: 6px;"
+        )
+        btn_proceed.clicked.connect(self.accept)
+        btn_layout.addWidget(btn_proceed)
+
+        layout.addLayout(btn_layout)
 
 
 class CardEditDialog(QDialog):
@@ -658,31 +759,46 @@ class CardEditDialog(QDialog):
 
         code = f"{self.selected_card.rank.char}{self.selected_card.suit.char.upper()}"
 
-        # Sanity check: verify with template engine if there is an extreme contradiction
+        # Sanity check: verify with template engine if there is a contradiction
         from app.vision.template_engine import CardTemplateEngine
         engine = CardTemplateEngine()
         d_rank, _ = CardReferenceLibrary.extract_dynamic_corner_patches(self.detected_card.raw_crop)
-        v_rank, v_conf = engine.match_rank(cv2.cvtColor(d_rank, cv2.COLOR_BGR2GRAY))
-
-        warning_text = ""
-        if v_conf >= 0.80 and v_rank != self.selected_card.rank:
-            warning_text = (
-                f"\n\n⚠️ CẢNH BÁO XUNG ĐỘT NHÃN:\n"
-                f"Hình ảnh lá bài có đặc điểm của rank '{v_rank.char}' ({int(v_conf*100)}% khớp),\n"
-                f"nhưng bạn đang chọn lưu nhãn '{self.selected_card.unicode_name}' ({code}).\n"
-                f"Vui lòng kiểm tra lại để tránh lưu sai mẫu!"
-            )
-
-        confirm = QMessageBox.question(
-            self,
-            "Xác nhận lưu ảnh mẫu",
-            f"Bạn có chắc chắn muốn lưu ảnh crop này làm mẫu chuẩn cho lá bài:\n\n"
-            f"👉 {self.selected_card.unicode_name} ({code}) 👈"
-            f"{warning_text}",
-            QMessageBox.Yes | QMessageBox.No,
+        v_rank, v_conf = (
+            engine.match_rank(cv2.cvtColor(d_rank, cv2.COLOR_BGR2GRAY))
+            if (d_rank is not None and d_rank.size > 0)
+            else (None, 0.0)
         )
-        if confirm != QMessageBox.Yes:
-            return
+
+        logger.info(
+            "User requested saving reference for %s (bbox=%s, engine_v_rank=%s, v_conf=%.2f)",
+            code,
+            self.detected_card.bbox,
+            v_rank.char if v_rank else None,
+            v_conf,
+        )
+
+        if v_rank is not None and v_conf >= 0.80 and v_rank != self.selected_card.rank:
+            contra_dialog = CardContradictionDialog(
+                card_crop=self.detected_card.raw_crop,
+                rank_crop=d_rank,
+                selected_card=self.selected_card,
+                predicted_rank=v_rank,
+                confidence=v_conf,
+                parent=self,
+            )
+            if contra_dialog.exec() != QDialog.Accepted:
+                logger.info("User cancelled saving reference after contradiction warning.")
+                return
+        else:
+            confirm = QMessageBox.question(
+                self,
+                "Xác nhận lưu ảnh mẫu",
+                f"Bạn có chắc chắn muốn lưu ảnh crop này làm mẫu chuẩn cho lá bài:\n\n"
+                f"👉 {self.selected_card.unicode_name} ({code}) 👈",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if confirm != QMessageBox.Yes:
+                return
 
         try:
             if self.reference_library is not None:
@@ -692,6 +808,7 @@ class CardEditDialog(QDialog):
                     source="user_confirmed",
                     metadata={"crop_bbox": list(self.detected_card.bbox)},
                 )
+                assert ref.card_code == code, f"Reference card_code mismatch: {ref.card_code} != {code}"
                 self.saved_as_reference = True
                 self.is_confirmed = True
                 self._update_reference_preview_for_selected_card()
@@ -704,6 +821,7 @@ class CardEditDialog(QDialog):
                 )
                 self.accept()
         except Exception as e:
+            logger.exception("Failed to save reference sample for %s: %s", code, e)
             QMessageBox.critical(self, "Lỗi lưu ảnh mẫu", f"Không thể lưu ảnh mẫu: {e}")
 
     def _on_delete_references_clicked(self) -> None:

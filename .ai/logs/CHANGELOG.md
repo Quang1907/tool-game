@@ -4,9 +4,23 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi chép t�
 
 ---
 
+## [1.2.1] — 2026-10-27
+
+### Fixed
+
+- **Khắc phục triệt để lỗi nhận diện 6 Cơ (6♥) thành 5 Cơ (5♥):**
+  - **Phân tích hình học & topo chữ số (Topological Hole Analysis) trong `template_engine.py`:** Sử dụng `cv2.RETR_CCOMP` phát hiện lỗ khép kín. Ký tự '6' bắt buộc có lỗ khép kín ở nửa dưới ($y \ge 0.40$), trong khi '5' không có lỗ khép kín. Áp dụng cơ chế phạt điểm nặng đối với các ứng viên không khớp cấu trúc topo lỗ, và căn giữa glyph trong bounding box 28x36.
+  - **Chấm dứt ghi đè nhãn ngầm (Silent Auto-Healing) trong `card_reference_library.py`:** Loại bỏ hoàn toàn khối lệnh tự ý `UPDATE card_references` trong `_add_to_cache`. Nhãn do người dùng xác nhận luôn là chân lý tối cao.
+  - **Sửa dữ liệu mẫu bị nhiễm độc trong SQLite (`data.db`):** Di chuyển bản ghi ID `1499111f-9cce-46f2-83a5-3cf6e4dce15c` từ `5H` sang `6H` và cập nhật lại đường dẫn ảnh file mẫu chuẩn.
+  - **Thêm hộp thoại `CardContradictionDialog` trong `card_edit_dialog.py`:** Cảnh báo trực quan nếu có sự mâu thuẫn lớn giữa nhãn người dùng chọn và kết quả nhận diện, bảo vệ người dùng không vô tình lưu đè mẫu sai.
+  - **Bổ sung 9 bài kiểm thử hồi quy `TestSavedCardReferenceLabelMismatchRegression`:** 113/113 tests toàn dự án đều vượt qua.
+
+---
+
 ## [1.2.0] — 2026-10-26
 
 ### Added
+
 - **AI Master Engineer System:**
   - Thiết lập thư mục `.ai/` quản lý toàn diện tri thức, kiến trúc, trạng thái, quy tắc và lộ trình phát triển.
   - Tạo `MASTER_CONTEXT.md` đóng vai trò bản đồ điều hướng cho mọi phiên AI tương lai.
@@ -21,6 +35,7 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi chép t�
 ## [1.1.2] — 2026-10-26
 
 ### Fixed
+
 - **Khắc phục lỗi False Positive Avatar người chơi bị nhận diện thành `K♦ 50% UNCERTAIN`:**
   - Thêm Candidate Validation trong `CardDetector.validate_crop()`: Loại bỏ các contour avatar hình tròn (độ tròn $> 0.65$), khối vuông $0.82 \le w/h \le 1.28$ có độ trắng $< 50\%$, và nút bấm UI có độ bão hòa màu cao.
   - Cập nhật `CardRecognizer.recognize_crop()`: Trả về `card=None, confidence=0.0` ngay khi phát hiện `NON_CARD_OBJECT` hoặc góc bài thiếu nền trắng ($< 35\%$), không đoán mò.
@@ -35,6 +50,7 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi chép t�
   - Chặn tuyệt đối việc lưu ảnh avatar / non-card vào `CardReferenceLibrary`.
 
 ### Added
+
 - Bổ sung `TestMandatoryVerificationTestSuite` trong `tests/test_card_detection_and_reference.py` kiểm chứng Test A (Avatar), Test B (Nút Rank), Test C (Nút Suit), Test D (Tọa độ crop), Test E (An toàn xác nhận mẫu).
 
 ---
@@ -42,6 +58,7 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi chép t�
 ## [1.1.1] — 2026-10-25
 
 ### Added
+
 - Tách biệt nhận diện Rank và Suit độc lập (`extract_dynamic_corner_patches` qua Connected Components).
 - Xây dựng Thư viện ảnh mẫu đã xác nhận (`CardReferenceLibrary`) lưu trong SQLite.
 - Thêm `CardEditDialog` cho phép người dùng xác nhận và sửa bài trực quan.
@@ -53,6 +70,7 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi chép t�
 ## [1.1.0] — 2026-10-25
 
 ### Added
+
 - Hỗ trợ giám sát 3 cửa sổ bàn chơi game đồng thời trên một màn hình MacBook.
 - Cơ chế 1-frame chụp chung, crop 3 ROI độc lập qua `ROIManager`.
 - Bộ theo dõi quân bài `CardTracker` bất biến vị trí (`position_invariant_hash`), không tính lại solver khi bài chỉ di chuyển.
@@ -62,6 +80,7 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi chép t�
 ## [1.0.0] — 2026-10-25
 
 ### Added
+
 - Khởi tạo kiến trúc Clean Architecture 5 tầng.
 - Mô hình hóa bài (`card.py`), bộ đánh giá (`evaluator.py`), luật tính điểm (`rules.py`).
 - Thuật toán phân rã tổ hợp 36,036 thế bài (`solver.py`).

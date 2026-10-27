@@ -141,25 +141,18 @@ class CardRecognizer:
 
     def recognize_crop(self, crop: CardCrop) -> DetectedCard:
         """Classifies an individual card crop by decoupling Rank and Suit recognition."""
-        if crop.crop_status in (
-            "INVALID_CARD_CROP",
-            "NON_CARD_OBJECT",
-            "MISSING_RANK_REGION",
-            "MISSING_SUIT_REGION",
-            "INVALID_CARD",
-        ):
-            reason_text = crop.detection.rejection_reason if (crop.detection and crop.detection.rejection_reason) else crop.crop_status
+        if crop.crop_status in ("INVALID_CARD_CROP", "NON_CARD_OBJECT", "MISSING_RANK_REGION", "MISSING_SUIT_REGION"):
             return DetectedCard(
                 card=None,
                 confidence=0.0,
                 bbox=crop.bbox,
                 raw_crop=crop.image if crop.image is not None else np.zeros((168, 120, 3), dtype=np.uint8),
                 detection_confidence=crop.detection.detection_confidence if crop.detection else 0.0,
-                detection_status="DETECTION_FAILED",
+                detection_status="INVALID_CARD_BOUNDS",
                 crop_status=crop.crop_status,
-                rejection_reason=reason_text,
-                recognition_status=crop.crop_status,
-                uncertain_reason=f"Đối tượng không phải lá bài hợp lệ ({reason_text})",
+                rejection_reason=crop.detection.rejection_reason if (crop.detection and crop.detection.rejection_reason) else crop.crop_status,
+                recognition_status="NON_CARD_OBJECT" if crop.crop_status == "NON_CARD_OBJECT" else "INVALID_CARD_BOUNDS",
+                uncertain_reason="Crop không phải vùng bài hợp lệ",
                 is_uncertain=True,
             )
 
@@ -177,29 +170,6 @@ class CardRecognizer:
 
         norm_img = crop.image
         has_custom_corner = crop.corner_crop is not None and crop.corner_crop.size > 0
-
-        # Check corner paper whiteness to reject avatars/photos passed directly
-        corner_h, corner_w = min(65, norm_img.shape[0]), min(45, norm_img.shape[1])
-        c_patch = norm_img[0:corner_h, 0:corner_w]
-        hsv_c = cv2.cvtColor(c_patch, cv2.COLOR_BGR2HSV)
-        gray_c = cv2.cvtColor(c_patch, cv2.COLOR_BGR2GRAY)
-        is_white_c = (hsv_c[:, :, 1] <= 90) & (hsv_c[:, :, 2] >= 130) & (gray_c >= 125)
-        c_white_ratio = float(np.mean(is_white_c))
-
-        if c_white_ratio < 0.35 and not has_custom_corner:
-            return DetectedCard(
-                card=None,
-                confidence=0.0,
-                bbox=crop.bbox,
-                raw_crop=norm_img,
-                detection_confidence=crop.detection.detection_confidence if crop.detection else 0.0,
-                detection_status="DETECTION_FAILED",
-                crop_status="NON_CARD_OBJECT",
-                rejection_reason="MISSING_WHITE_CORNER_INDEX",
-                recognition_status="NON_CARD_OBJECT",
-                uncertain_reason="Vùng góc không có nền trắng lá bài (đối tượng không phải lá bài)",
-                is_uncertain=True,
-            )
 
         gray_corner = cv2.cvtColor(norm_img[0:105, 0:50], cv2.COLOR_BGR2GRAY) if (norm_img is not None and norm_img.shape[0] >= 105 and norm_img.shape[1] >= 50) else None
         has_norm_corner = cv2.countNonZero(gray_corner < 240) > 20 if gray_corner is not None else False
@@ -270,11 +240,6 @@ class CardRecognizer:
             final_suit = algo_suit
             final_suit_conf = algo_suit_conf
 
-        # Reject false positive predictions if glyph confidence is very low without reference match
-        if (ref_rank is None and algo_rank_conf < 0.38) or (ref_rank is None and ref_suit is None and algo_rank_conf < 0.45 and algo_suit_conf < 0.38):
-            final_rank = None
-            final_suit = None
-
         # 5. Full Card Reference Matching & Validation
         ref_match = self.reference_library.match_crop(
             crop_image=crop.image,
@@ -315,41 +280,36 @@ class CardRecognizer:
         card = Card(final_rank, final_suit) if (final_rank and final_suit) else None
         det_conf = crop.detection.detection_confidence if crop.detection else 1.0
 
-        if card is None:
-            recog_conf = 0.0
-            overall_conf = 0.0
-            final_rank_conf = 0.0
-            final_suit_conf = 0.0
-            is_uncertain = True
-            uncertain_reason = "Không nhận diện được rank hoặc suit hợp lệ (không phải lá bài)"
-        else:
-            recog_conf = round(final_rank_conf * 0.50 + final_suit_conf * 0.50, 4)
-            if is_ref_match:
-                recog_conf = max(recog_conf, round(matched_similarity, 4))
+        recog_conf = round(final_rank_conf * 0.50 + final_suit_conf * 0.50, 4)
+        if is_ref_match:
+            recog_conf = max(recog_conf, round(matched_similarity, 4))
 
-            overall_conf = round(0.15 * det_conf + 0.85 * recog_conf, 4)
+        overall_conf = round(0.15 * det_conf + 0.85 * recog_conf, 4)
 
-            if crop.crop_status == "LOW_QUALITY_CROP":
-                overall_conf = round(overall_conf * 0.85, 4)
+        if crop.crop_status == "LOW_QUALITY_CROP":
+            overall_conf = round(overall_conf * 0.85, 4)
 
-            is_uncertain = (
-                (overall_conf < 0.65)
-                or (final_rank_conf < 0.55)
-                or (final_suit_conf < 0.55)
-                or (det_conf < 0.65)
-            )
-            uncertain_reason = ""
-            if is_uncertain:
-                if det_conf < 0.65:
-                    uncertain_reason = f"Độ tin cậy vị trí lá bài thấp ({int(det_conf*100)}%)"
-                elif final_rank_conf < 0.55 and final_suit_conf < 0.55:
-                    uncertain_reason = f"Độ tin cậy rank ({int(final_rank_conf*100)}%) và suit ({int(final_suit_conf*100)}%) đều thấp"
-                elif final_rank_conf < 0.55:
-                    uncertain_reason = f"Độ tin cậy rank thấp ({int(final_rank_conf*100)}%)"
-                elif final_suit_conf < 0.55:
-                    uncertain_reason = f"Độ tin cậy suit thấp ({int(final_suit_conf*100)}%)"
-                else:
-                    uncertain_reason = f"Độ tin cậy tổng thể thấp ({int(overall_conf*100)}%)"
+        is_uncertain = (
+            (card is None)
+            or (overall_conf < 0.65)
+            or (final_rank_conf < 0.55)
+            or (final_suit_conf < 0.55)
+            or (det_conf < 0.65)
+        )
+        uncertain_reason = ""
+        if is_uncertain:
+            if card is None:
+                uncertain_reason = "Không nhận diện được rank hoặc suit"
+            elif det_conf < 0.65:
+                uncertain_reason = f"Độ tin cậy vị trí lá bài thấp ({int(det_conf*100)}%)"
+            elif final_rank_conf < 0.55 and final_suit_conf < 0.55:
+                uncertain_reason = f"Độ tin cậy rank ({int(final_rank_conf*100)}%) và suit ({int(final_suit_conf*100)}%) đều thấp"
+            elif final_rank_conf < 0.55:
+                uncertain_reason = f"Độ tin cậy rank thấp ({int(final_rank_conf*100)}%)"
+            elif final_suit_conf < 0.55:
+                uncertain_reason = f"Độ tin cậy suit thấp ({int(final_suit_conf*100)}%)"
+            else:
+                uncertain_reason = f"Độ tin cậy tổng thể thấp ({int(overall_conf*100)}%)"
 
         has_saved_ref = False
         if card:
@@ -378,12 +338,11 @@ class CardRecognizer:
         else:
             recog_status = "CONFIRMED"
 
-        source_crop = crop.raw_patch if (crop.raw_patch is not None and crop.raw_patch.size > 0) else crop.image
         return DetectedCard(
             card=card,
             confidence=overall_conf,
             bbox=crop.bbox,
-            raw_crop=source_crop,
+            raw_crop=crop.image,
             rank_confidence=round(final_rank_conf, 4),
             suit_confidence=round(final_suit_conf, 4),
             overall_confidence=overall_conf,

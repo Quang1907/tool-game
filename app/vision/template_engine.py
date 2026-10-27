@@ -192,7 +192,26 @@ class CardTemplateEngine:
         if patch_h < 4 or patch_w < 3:
             return Rank.ACE, 0.30
 
+        # Topological feature extraction: detect closed loops (holes) and their vertical positions
+        contours, hierarchy = cv2.findContours(patch_bin.copy(), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        has_bottom_hole = False
+        has_top_hole = False
+        if hierarchy is not None and len(hierarchy[0]) > 1:
+            for i, h_info in enumerate(hierarchy[0]):
+                if h_info[3] != -1:  # Child contour = hole
+                    hole_area = cv2.contourArea(contours[i])
+                    if hole_area >= 8:
+                        M = cv2.moments(contours[i])
+                        if M["m00"] > 0:
+                            cy = M["m01"] / M["m00"]
+                            rel_y = cy / float(patch_h)
+                            if rel_y >= 0.40:
+                                has_bottom_hole = True
+                            if rel_y <= 0.60:
+                                has_top_hole = True
+
         for r_char, tmpls in self._rank_templates.items():
+            char_best = -1.0
             for tmpl in tmpls:
                 # Resize template to patch height maintaining aspect ratio
                 th, tw = tmpl.shape[:2]
@@ -202,20 +221,42 @@ class CardTemplateEngine:
                 scaled_w = max(1, int(tw * (patch_h / float(th))))
                 resized_tmpl = cv2.resize(tmpl, (scaled_w, patch_h))
 
-                # Normalize sizes for correlation
+                # Normalize sizes for correlation (centered alignment)
                 target_w = max(patch_w, scaled_w)
                 p_pad = np.zeros((patch_h, target_w), dtype=np.uint8)
                 t_pad = np.zeros((patch_h, target_w), dtype=np.uint8)
 
-                p_pad[:, :patch_w] = patch_bin
-                t_pad[:, :scaled_w] = resized_tmpl
+                pad_p = (target_w - patch_w) // 2
+                pad_t = (target_w - scaled_w) // 2
+                p_pad[:, pad_p : pad_p + patch_w] = patch_bin
+                t_pad[:, pad_t : pad_t + scaled_w] = resized_tmpl
 
                 res = cv2.matchTemplate(p_pad, t_pad, cv2.TM_CCOEFF_NORMED)
                 score = float(res[0][0]) if res is not None else -1.0
+                if score > char_best:
+                    char_best = score
 
-                if score > best_score:
-                    best_score = score
-                    best_rank_char = r_char
+            # Apply topological consistency to prevent 6 vs 5 or 9 vs 6 misclassifications
+            if has_bottom_hole and not has_top_hole:
+                # Distinct closed loop at bottom -> only 6 matches this topology
+                if r_char in ("2", "3", "4", "5", "7", "J", "K"):
+                    char_best *= 0.15
+                elif r_char == "6":
+                    char_best = min(0.99, char_best * 1.35)
+            elif has_top_hole and not has_bottom_hole:
+                # Distinct closed loop at top -> only 9 matches this topology
+                if r_char in ("2", "3", "4", "5", "6", "7", "J", "K"):
+                    char_best *= 0.15
+                elif r_char == "9":
+                    char_best = min(0.99, char_best * 1.35)
+            elif not has_bottom_hole and not has_top_hole:
+                # Digits with no holes (2, 3, 5, 7, etc.) cannot be digits with closed loops
+                if r_char in ("6", "8", "9", "Q"):
+                    char_best *= 0.20
+
+            if char_best > best_score:
+                best_score = char_best
+                best_rank_char = r_char
 
         # Calibrate NCC score: noise is <0.25, legitimate characters score 0.35-0.95
         calibrated = min(0.98, max(0.20, best_score * 1.6)) if best_score > 0 else 0.20

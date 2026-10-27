@@ -831,3 +831,211 @@ class TestMandatoryVerificationTestSuite:
 
         dlg.close()
 
+
+class TestSavedCardReferenceLabelMismatchRegression:
+    """Regression test suite for fixing 6♥ vs 5♥ reference label mismatch bug.
+    Verifies:
+    1. Manual card selection overrides erroneous system predictions.
+    2. Saving reference persists user-confirmed card code strictly.
+    3. Contradiction warning dialog triggers on extreme rank mismatch.
+    4. Saved references preserve exact card_code across restarts and cache reloads.
+    5. Exact card reference lookup differentiates 6♥ from 5♥, 6♦, 5♦.
+    6. Topological closed-loop analysis distinguishes rank 6 (bottom loop) from 5 (no loop).
+    7. Future recognitions match the stored 6♥ reference with high confidence.
+    8. Cache reloads never corrupt or overwrite user references.
+    9. Idempotent storage prevents duplicate reference entries.
+    """
+
+    def test_1_manual_selection_wins_over_wrong_prediction(self, isolated_lib):
+        """User selecting 6♥ when system predicted 5♥ must accept 6♥."""
+        from PySide6.QtWidgets import QApplication
+        from app.ui.components.card_edit_dialog import CardEditDialog
+
+        app = QApplication.instance() or QApplication([])
+        raw = _generate_synthetic_card("6", is_red=True)
+        wrong_pred = DetectedCard(
+            card=Card(Rank.FIVE, Suit.HEARTS),
+            confidence=0.97,
+            bbox=(10, 10, 100, 140),
+            raw_crop=raw,
+            crop_status="VALID_CARD_CROP",
+        )
+        dlg = CardEditDialog(detected_card=wrong_pred, reference_library=isolated_lib)
+        assert dlg.selected_card == Card(Rank.FIVE, Suit.HEARTS)
+
+        # User clicks 6H button in the grid
+        dlg._card_buttons["6H"].click()
+        assert dlg.selected_card == Card(Rank.SIX, Suit.HEARTS)
+
+        dlg._on_confirm_clicked()
+        assert dlg.is_confirmed is True
+        assert dlg.selected_card == Card(Rank.SIX, Suit.HEARTS)
+        dlg.close()
+
+    def test_2_save_reference_persists_chosen_card(self, isolated_lib):
+        """Saving reference when user selected 6♥ saves strictly under 6H."""
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+        from app.ui.components.card_edit_dialog import CardEditDialog
+
+        app = QApplication.instance() or QApplication([])
+        raw = _generate_synthetic_card("6", is_red=True)
+        wrong_pred = DetectedCard(
+            card=Card(Rank.FIVE, Suit.HEARTS),
+            confidence=0.97,
+            bbox=(10, 10, 100, 140),
+            raw_crop=raw,
+            crop_status="VALID_CARD_CROP",
+        )
+        dlg = CardEditDialog(detected_card=wrong_pred, reference_library=isolated_lib)
+        dlg._card_buttons["6H"].click()
+        assert dlg.selected_card == Card(Rank.SIX, Suit.HEARTS)
+
+        with patch("PySide6.QtWidgets.QMessageBox.question", return_value=QMessageBox.Yes), \
+             patch("PySide6.QtWidgets.QMessageBox.information"), \
+             patch("app.ui.components.card_edit_dialog.CardContradictionDialog.exec", return_value=QDialog.Accepted):
+            dlg._on_save_as_reference_clicked()
+
+        assert dlg.saved_as_reference is True
+        assert len(isolated_lib.get_references_for_card("6H")) == 1
+        assert len(isolated_lib.get_references_for_card("5H")) == 0
+        ref = isolated_lib.get_references_for_card("6H")[0]
+        assert ref.card_code == "6H"
+        assert ref.rank == "6"
+        assert ref.suit == "H"
+        dlg.close()
+
+    def test_3_confirmation_flow_asks_on_contradiction(self, isolated_lib):
+        """CardContradictionDialog is shown on mismatch; user can cancel or proceed."""
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QApplication, QDialog
+        from app.ui.components.card_edit_dialog import CardEditDialog
+
+        app = QApplication.instance() or QApplication([])
+        raw = _generate_synthetic_card("6", is_red=True)
+        wrong_pred = DetectedCard(
+            card=Card(Rank.FIVE, Suit.HEARTS),
+            confidence=0.97,
+            bbox=(10, 10, 100, 140),
+            raw_crop=raw,
+            crop_status="VALID_CARD_CROP",
+        )
+        dlg = CardEditDialog(detected_card=wrong_pred, reference_library=isolated_lib)
+        dlg._card_buttons["6H"].click()
+
+        # Case A: User cancels contradiction dialog -> nothing is saved
+        with patch("app.vision.template_engine.CardTemplateEngine.match_rank", return_value=(Rank.FIVE, 0.95)), \
+             patch("app.ui.components.card_edit_dialog.CardContradictionDialog.exec", return_value=QDialog.Rejected):
+            dlg._on_save_as_reference_clicked()
+
+        assert dlg.saved_as_reference is False
+        assert len(isolated_lib.get_references_for_card("6H")) == 0
+
+        # Case B: User confirms in contradiction dialog -> reference is saved under 6H
+        with patch("app.vision.template_engine.CardTemplateEngine.match_rank", return_value=(Rank.FIVE, 0.95)), \
+             patch("app.ui.components.card_edit_dialog.CardContradictionDialog.exec", return_value=QDialog.Accepted), \
+             patch("PySide6.QtWidgets.QMessageBox.information"):
+            dlg._on_save_as_reference_clicked()
+
+        assert dlg.saved_as_reference is True
+        assert len(isolated_lib.get_references_for_card("6H")) == 1
+        dlg.close()
+
+    def test_4_reference_persistence_invariance(self, temp_ref_dir):
+        """References persist across application restarts with unchanged card_code."""
+        ref_dir, db_path = temp_ref_dir
+        db = DatabaseManager(db_path=db_path)
+        lib = CardReferenceLibrary(db_manager=db, storage_dir=ref_dir)
+        raw = _generate_synthetic_card("6", is_red=True)
+        card_6h = Card(Rank.SIX, Suit.HEARTS)
+        lib.add_reference(image=raw, card=card_6h, source="user_confirmed")
+
+        # Simulate app restart
+        db2 = DatabaseManager(db_path=db_path)
+        lib2 = CardReferenceLibrary(db_manager=db2, storage_dir=ref_dir)
+        assert len(lib2.get_references_for_card("6H")) == 1
+        assert len(lib2.get_references_for_card("5H")) == 0
+        ref = lib2.get_references_for_card("6H")[0]
+        assert ref.card_code == "6H"
+        assert ref.rank == "6"
+        assert ref.suit == "H"
+
+    def test_5_exact_card_reference_lookup(self, isolated_lib):
+        """Looking up references for 6H returns only 6H, not 5H, 6D, or 5D."""
+        raw = _generate_synthetic_card("6", is_red=True)
+        card_6h = Card(Rank.SIX, Suit.HEARTS)
+        isolated_lib.add_reference(image=raw, card=card_6h, source="user_confirmed")
+
+        assert len(isolated_lib.get_references_for_card("6H")) == 1
+        assert len(isolated_lib.get_references_for_card("5H")) == 0
+        assert len(isolated_lib.get_references_for_card("6D")) == 0
+        assert len(isolated_lib.get_references_for_card("5D")) == 0
+
+    def test_6_topological_closed_loop_analysis(self):
+        """CardTemplateEngine correctly identifies Rank 6 vs Rank 5 via loop analysis."""
+        from app.vision.template_engine import CardTemplateEngine
+        engine = CardTemplateEngine()
+
+        img_6 = np.full((40, 30), 255, dtype=np.uint8)
+        cv2.putText(img_6, "6", (4, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, 0, 2, cv2.LINE_AA)
+        rank_6, conf_6 = engine.match_rank(img_6)
+        assert rank_6 == Rank.SIX
+        assert conf_6 >= 0.70
+
+        img_5 = np.full((40, 30), 255, dtype=np.uint8)
+        cv2.putText(img_5, "5", (4, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, 0, 2, cv2.LINE_AA)
+        rank_5, conf_5 = engine.match_rank(img_5)
+        assert rank_5 == Rank.FIVE
+        assert conf_5 >= 0.70
+
+    def test_7_prediction_uses_correct_reference(self, isolated_lib):
+        """Querying a crop that matches saved 6H reference produces 6♥ prediction."""
+        raw_6h = _generate_synthetic_card("6", is_red=True)
+        card_6h = Card(Rank.SIX, Suit.HEARTS)
+        isolated_lib.add_reference(image=raw_6h, card=card_6h, source="user_confirmed")
+
+        rec = CardRecognizer(reference_library=isolated_lib)
+        norm = cv2.resize(raw_6h, (120, 168))
+        corner = norm[0:60, 0:40]
+        crop = CardCrop(image=norm, bbox=(0, 0, 120, 168), corner_crop=corner)
+        pred = rec.recognize_crop(crop)
+
+        assert pred.card == card_6h
+        assert pred.is_reference_match is True
+        assert pred.confidence >= 0.90
+
+    def test_8_no_silent_corruption_on_reload(self, isolated_lib):
+        """Repeated reload_cache calls never rewrite or corrupt SQLite records."""
+        raw = _generate_synthetic_card("6", is_red=True)
+        card_6h = Card(Rank.SIX, Suit.HEARTS)
+        isolated_lib.add_reference(image=raw, card=card_6h, source="user_confirmed")
+
+        for _ in range(5):
+            isolated_lib.reload_cache()
+            assert len(isolated_lib.get_references_for_card("6H")) == 1
+            assert len(isolated_lib.get_references_for_card("5H")) == 0
+
+        with isolated_lib.db.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT card_code, rank FROM card_references")
+            rows = cur.fetchall()
+            assert len(rows) == 1
+            assert rows[0]["card_code"] == "6H"
+            assert rows[0]["rank"] == "6"
+
+    def test_9_prevent_duplicate_and_hash_storage(self, isolated_lib):
+        """Distinct images are saved with unique hashes; identical images are idempotent."""
+        raw1 = _generate_synthetic_card("6", is_red=True, w=100, h=140)
+        card_6h = Card(Rank.SIX, Suit.HEARTS)
+        ref1 = isolated_lib.add_reference(image=raw1, card=card_6h, source="user_confirmed")
+
+        ref2 = isolated_lib.add_reference(image=raw1, card=card_6h, source="user_confirmed")
+        assert ref1.id == ref2.id
+        assert len(isolated_lib.get_references_for_card("6H")) == 1
+
+        raw3 = _generate_synthetic_card("6", is_red=True, w=110, h=150)
+        ref3 = isolated_lib.add_reference(image=raw3, card=card_6h, source="user_confirmed")
+        assert ref3.id != ref1.id
+        assert len(isolated_lib.get_references_for_card("6H")) == 2
+
+

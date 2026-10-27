@@ -355,32 +355,39 @@ class CardReferenceLibrary:
         ref_id = str(uuid.uuid4())
         filename = f"{card_code}_{image_hash[:8]}_{ref_id[:6]}.png"
         file_path = self.storage_dir / filename
-        cv2.imwrite(str(file_path), image)
+        success = cv2.imwrite(str(file_path), image)
+        if not success:
+            raise IOError(f"Failed to write reference image to {file_path}")
 
         now_str = datetime.datetime.now().isoformat()
         metadata_json = json.dumps(metadata_dict)
 
         # 3. Insert record into database
-        with self.db.get_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO card_references (
-                    id, card_code, rank, suit, image_path, source,
-                    confirmed, created_at, image_hash, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-                """,
-                (
-                    ref_id,
-                    card_code,
-                    card.rank.char,
-                    card.suit.char.upper(),
-                    str(file_path),
-                    source,
-                    now_str,
-                    image_hash,
-                    metadata_json,
-                ),
-            )
+        try:
+            with self.db.get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO card_references (
+                        id, card_code, rank, suit, image_path, source,
+                        confirmed, created_at, image_hash, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                    """,
+                    (
+                        ref_id,
+                        card_code,
+                        card.rank.char,
+                        card.suit.char.upper(),
+                        str(file_path),
+                        source,
+                        now_str,
+                        image_hash,
+                        metadata_json,
+                    ),
+                )
+        except Exception:
+            if file_path.exists():
+                file_path.unlink()
+            raise
 
         ref = CardReference(
             id=ref_id,
@@ -537,29 +544,6 @@ class CardReferenceLibrary:
         suit_crop = d_suit if (d_suit is not None and d_suit.size > 0) else norm_card[52:95, 6:46]
         rank_glyph = self.extract_primary_glyph(rank_crop, (24, 36))
         suit_glyph = self.extract_primary_glyph(suit_crop, (28, 28))
-
-        # Automated Reference Data Integrity & Healing:
-        # Detect if stored reference sample has a flagrant visual mismatch against its stored label
-        # (e.g. sample stored as 9D, but visual rank is clearly Queen with high confidence >= 0.85).
-        from app.vision.template_engine import CardTemplateEngine
-        if not hasattr(self, "_label_verifier") or self._label_verifier is None:
-            self._label_verifier = CardTemplateEngine()
-
-        v_rank, v_conf = self._label_verifier.match_rank(cv2.cvtColor(rank_crop, cv2.COLOR_BGR2GRAY))
-        if v_conf >= 0.85 and v_rank != card.rank:
-            # Self-healing: Update SQLite record and card code to true visual rank!
-            correct_code = f"{v_rank.char}{card.suit.char.upper()}"
-            card = Card(v_rank, card.suit)
-            ref.card_code = correct_code
-            ref.rank = v_rank.char
-            try:
-                with self.db.get_connection() as conn:
-                    conn.execute(
-                        "UPDATE card_references SET card_code = ?, rank = ? WHERE id = ?",
-                        (correct_code, v_rank.char, ref.id),
-                    )
-            except Exception:
-                pass
 
         dhash_hex = ref.image_hash or self.compute_dhash(img)
         dhash_int = int(dhash_hex, 16) if dhash_hex else 0
