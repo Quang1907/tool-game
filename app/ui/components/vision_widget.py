@@ -330,7 +330,34 @@ class VisionWidget(QWidget):
 
         self.progress_bar.setVisible(False)
         self.btn_recognize.setEnabled(True)
-        self.detected_cards = detected_cards
+        
+        # --- BẮT ĐẦU ĐOẠN SỬA ĐỔI: BỘ LỌC NGHIÊM NGẶT ---
+        strict_detected_cards = []
+        min_threshold = 0.65  # Ngưỡng an toàn tối thiểu (65%) cho cả Rank và Suit
+
+        for det in detected_cards:
+            # Kiểm tra xem có trích xuất được hình ảnh/khung của cả Rank và Suit hay không
+            if det.rank_crop is None or det.suit_crop is None:
+                print(f"[CV Filter] Loại bỏ thực thể do thiếu khung Rank hoặc Suit (ID: {det.detection_id})")
+                continue
+                
+            # Kiểm tra độ tin cậy của cả Rank và Suit có đạt chuẩn hay không
+            # (Tránh trường hợp bị nhiễu vật thể hoặc nhận diện sai cấu trúc)
+            rank_conf = getattr(det, 'rank_confidence', 0.0)
+            suit_conf = getattr(det, 'suit_confidence', 0.0)
+            
+            if rank_conf < min_threshold or suit_conf < min_threshold:
+                print(f"[CV Filter] Loại bỏ quân bài nghi ngờ dưới ngưỡng an toàn: Rank={rank_conf:.2f}, Suit={suit_conf:.2f}")
+                continue
+                
+            # Nếu thỏa mãn mọi yếu tố hình học và độ tin cậy, chuyển trạng thái thành CONFIRMED
+            det.is_uncertain = False
+            det.recognition_status = "CONFIRMED"
+            strict_detected_cards.append(det)
+            
+        self.detected_cards = strict_detected_cards
+        # --- KẾT THÚC ĐOẠN SỬA ĐỔI ---
+
         self.last_debug_info = debug_info
 
         # Update diagnostic debug panel
@@ -342,7 +369,7 @@ class VisionWidget(QWidget):
 
         # Update viewer bounding boxes and polygons
         if self.current_image is not None:
-            self.image_viewer.set_image(self.current_image, detected_cards)
+            self.image_viewer.set_image(self.current_image, self.detected_cards)
 
         self._display_detected_cards()
 
@@ -399,18 +426,25 @@ class VisionWidget(QWidget):
         has_low_conf = any(not d.is_verified and d.confidence < 0.70 for d in self.detected_cards)
         self.btn_review_uncertain.setEnabled(has_uncertain or has_low_conf)
 
+        # --- ĐOẠN SỬA ĐỔI: HIỂN THỊ CẢNH BÁO SỐ LƯỢNG LÁ BÀI ---
+        valid_cards_count = len([d for d in self.detected_cards if d.card is not None])
         report = RecognitionValidator.validate(self.detected_cards)
-        if has_uncertain or has_low_conf:
-            self.lbl_validation_msg.setText(f"{report.message} (Có lá bài cần xác nhận, bấm '⚠️ Duyệt bài nghi ngờ')")
+        
+        if valid_cards_count < 13:
+            self.lbl_validation_msg.setText(
+                f"⚠️ Chỉ phát hiện {valid_cards_count}/13 lá bài đạt chuẩn (Đủ Rank & Suit và Độ tin cậy > 65%). Vui lòng Click vào ảnh hoặc bổ sung thủ công!"
+            )
             self.lbl_validation_msg.setStyleSheet("color: #FF9F0A; font-weight: 600;")
+            self.btn_confirm.setEnabled(False)  # Khóa nút xác nhận chuyển sang xếp bài
         else:
             self.lbl_validation_msg.setText(report.message)
             if report.is_valid:
                 self.lbl_validation_msg.setStyleSheet("color: #30D158; font-weight: 600;")
+                self.btn_confirm.setEnabled(True)
             else:
                 self.lbl_validation_msg.setStyleSheet("color: #FF9F0A; font-weight: 600;")
-
-        self.btn_confirm.setEnabled(report.is_valid)
+                self.btn_confirm.setEnabled(False)
+        # --- KẾT THÚC ĐOẠN SỬA ĐỔI ---
 
     def _open_card_editor(self, index: int) -> None:
         if not (0 <= index < len(self.detected_cards)):
