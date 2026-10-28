@@ -1,7 +1,7 @@
 # CURRENT STATE — BINH 13 ANALYZER (macOS)
 
 **Cập nhật lần cuối:** 2026-10-28  
-**Trạng thái kiểm thử:** 119/119 tests PASSED (100%)  
+**Trạng thái kiểm thử:** 124/124 tests PASSED (100%)  
 **Môi trường thực thi:** Python 3.11.17 (`.venv`), macOS Sequoia 15.4.1 (ARM64 Apple Silicon)
 
 ---
@@ -13,7 +13,8 @@
 | **Domain Core**     | `card.py` (Rank, Suit, Card, Deck, Hand)                  | `VERIFIED` | `test_card.py` (10 tests passed)                       |
 | **Domain Core**     | `evaluator.py` (3-card, 5-card, Foul detection)           | `VERIFIED` | `test_evaluator.py` (14 tests passed)                  |
 | **Domain Core**     | `rules.py` (Scoring, Scoop, Penalties, Special hands)     | `VERIFIED` | `test_rules.py` (5 tests passed)                       |
-| **Domain Core**     | `solver.py` (36,036 partitions, pruning)                  | `VERIFIED` | `test_solver.py` (4 tests passed, toán học chứng minh) |
+| **Domain Core**     | `solver.py` (36,036 partitions, pruning, solve_heuristic) | `VERIFIED` | `test_solver.py` (4 tests passed, toán học chứng minh) |
+| **Domain Core**     | `collaborative_analyzer.py` (4th hand deduction & counter)| `VERIFIED` | `test_collaborative_analyzer.py` (4 tests passed)      |
 | **Domain Core**     | `simulator.py` & `ev_optimizer.py` (Monte Carlo CRN)      | `VERIFIED` | `test_simulator.py` (4 tests passed)                   |
 | **Vision Pipeline** | `screen_capture.py` (macOS Retina 2x & CGWindowID direct) | `VERIFIED` | `test_vision.py` & `test_multi_window.py` passed       |
 | **Vision Pipeline** | `image_preprocessor.py` (Warp 120x168, green border)      | `VERIFIED` | `test_vision.py` passed                                |
@@ -48,3 +49,10 @@
    - **Bổ sung bọc an toàn `try...except`:** Cả trong [multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py) và [multi_window_service.py](file:///Users/levanquang/tool/app/services/multi_window_service.py) khi giải bài, đảm bảo không bao giờ làm crash tiến trình ứng dụng hay QThread nếu có bất thường.
    - **Triệt tiêu cảnh báo font Qt `SF Pro Text`:** Thay thế `SF Pro Text` bằng native macOS font alias `.AppleSystemUIFont` trong [styles.py](file:///Users/levanquang/tool/app/ui/styles.py) và [card_widget.py](file:///Users/levanquang/tool/app/ui/components/card_widget.py), tăng tốc độ khởi tạo GUI và loại bỏ 100% cảnh báo font.
    - **Bổ sung thuộc tính `code` vào class [Card](file:///Users/levanquang/tool/app/core/card.py):** Cho phép truy xuất mã chuỗi thuận tiện (`short_name`).
+
+3. **Tính năng Suy Luận 13 Lá Bài Đối Thủ (Nhà Thứ 4) & Chiến Lược Tập Thể Khắc Chế Triệt Hạ:**
+   - **Động cơ suy luận loại trừ bài [collaborative_analyzer.py](file:///Users/levanquang/tool/app/core/collaborative_analyzer.py):** Từ 39 lá bài được phát hiện trên 3 cửa sổ game (3 người chơi), hệ thống thực hiện phép loại trừ trên bộ bài chuẩn 52 lá ($52 - 39 = 13$) để xác định chính xác 100% 13 lá bài của nhà đối thủ thứ 4.
+   - **Giải thế bài tối ưu của đối thủ:** Tự động giải 13 lá bài của đối thủ bằng `Solver` để biết trước thế bài mạnh nhất mà đối thủ có thể xếp.
+   - **Chiến lược phản công cho 3 cửa sổ:** Duyệt qua tất cả các thế bài hợp lệ của từng cửa sổ người chơi và so sánh đối đầu trực tiếp (`compare_head_to_head`) với bài đối thủ. Thuật toán tự động chọn thế bài giúp **Bắt sập 3 chi (+6 điểm)** hoặc tối đa hóa điểm thắng chi trước đối thủ.
+   - **Giao diện bảng điều khiển đối thủ `OpponentDeductionPanel`:** Hiển thị 13 thumbnail lá bài của đối thủ, thế bài 3 chi của đối thủ, huy hiệu kết quả đối đầu từng nhà (`🏆 BẮT SẬP 3 CHI`, `✓ Thắng 2 Chi`) và tổng điểm toàn bàn.
+   - **Bổ sung test suite `test_collaborative_analyzer.py`:** Nâng tổng số test toàn dự án lên **124/124 PASSED (100%)**.

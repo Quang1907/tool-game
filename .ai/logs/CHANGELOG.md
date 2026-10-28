@@ -4,6 +4,29 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi chép t�
 
 ---
 
+## [1.3.0] — 2026-10-28
+
+### Added
+
+- **Tính năng Suy Luận 13 Lá Bài Đối Thủ (Nhà Thứ 4) & Chiến Lược Tập Thể Khắc Chế Triệt Hạ:**
+  - **Module phân tích tập thể ([collaborative_analyzer.py](file:///Users/levanquang/tool/app/core/collaborative_analyzer.py)):**
+    - Loại trừ 39 lá bài từ 3 cửa sổ khỏi bộ bài chuẩn 52 cây ($52 - 39 = 13$) để khóa chặt chính xác 100% 13 lá bài của nhà đối thủ còn lại.
+    - Tự động dùng `Solver` giải ra thế bài 3 chi mạnh nhất mà đối thủ có thể xếp.
+    - Chạy thuật toán đối đầu trực tiếp (`compare_head_to_head`) giữa tất cả các thế bài hợp lệ của từng cửa sổ người chơi với bài đối thủ, tự động tối ưu hóa để **Bắt sập 3 chi (+6 điểm)** hoặc thắng tối đa số chi trước đối thủ.
+  - **Bảng điều khiển đối thủ `OpponentDeductionPanel` ([multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py)):**
+    - Hiển thị thanh trạng thái khóa chặt đối thủ và tổng điểm 3 nhà vs đối thủ.
+    - Hiển thị 13 quân bài thumbnail của đối thủ.
+    - Hiển thị thế bài 3 chi đối thủ sẽ xếp (Chi Đầu, Chi Giữa, Chi Cuối).
+  - **Huy hiệu kết quả đối đầu trên từng cửa sổ:**
+    - Hiển thị dự đoán đối đầu: `🏆 BẮT SẬP 3 CHI (+6 điểm)` (xanh lá), `✓ Thắng (+X điểm)` (xanh dương), cùng kết quả chi tiết từng chi (Đầu, Giữa, Cuối).
+    - Tự động chuyển thế bài gợi ý sang thế bài khắc chế tối ưu.
+  - **Bộ kiểm thử toàn diện:**
+    - Thêm suite unit test độc lập `tests/test_collaborative_analyzer.py` (4 tests).
+    - Thêm test tích hợp giao diện `test_multi_window_deduces_opponent_and_optimizes_counter_strategy` trong `tests/test_multi_window.py`.
+    - Nâng tổng số bài test toàn dự án đạt **124/124 PASSED (100%)**.
+
+---
+
 ## [1.2.3] — 2026-10-28
 
 ### Fixed

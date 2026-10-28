@@ -21,6 +21,11 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.card import Card
+from app.core.collaborative_analyzer import (
+    CollaborativeTableAnalyzer,
+    CollaborativeTableResult,
+    WindowCounterStrategy,
+)
 from app.core.solver import HandArrangement, Solver
 from app.services.multi_window_service import MultiWindowWorker
 from app.ui.components.card_widget import CardWidget
@@ -93,6 +98,22 @@ class SingleWindowPanel(QGroupBox):
 
         layout.addWidget(self.box_solution)
 
+        # Matchup / Counter-strategy box vs deduced 4th opponent
+        self.box_vs_opp = QGroupBox("⚔️ Khắc chế đối thủ #4")
+        self.box_vs_opp.setStyleSheet("font-size: 11px;")
+        opp_box_layout = QVBoxLayout(self.box_vs_opp)
+        opp_box_layout.setSpacing(2)
+        opp_box_layout.setContentsMargins(6, 6, 6, 6)
+
+        self.lbl_opp_outcome = QLabel("Đang chờ đủ 3 cửa sổ...")
+        self.lbl_opp_outcome.setStyleSheet("font-size: 11px; font-weight: 600; color: #8E8E93;")
+        self.lbl_opp_breakdown = QLabel("—")
+        self.lbl_opp_breakdown.setStyleSheet("font-size: 10px; color: #A0A0A0;")
+
+        opp_box_layout.addWidget(self.lbl_opp_outcome)
+        opp_box_layout.addWidget(self.lbl_opp_breakdown)
+        layout.addWidget(self.box_vs_opp)
+
     def update_state(self, state: WindowCardState, crop_img: Optional[np.ndarray]) -> None:
         """Updates live preview and card list."""
         if state.status == "OCCLUDED":
@@ -139,6 +160,136 @@ class SingleWindowPanel(QGroupBox):
         self.lbl_chi_middle.setText(f"Chi Giữa: {m_names} ({m_type})")
         self.lbl_chi_back.setText(f"Chi Cuối: {b_names} ({b_type})")
 
+    def update_counter_strategy(self, strat: WindowCounterStrategy) -> None:
+        """Updates matchup display and arrangement vs Opponent."""
+        self.update_solution(strat.optimal_arrangement)
+        self.lbl_opp_outcome.setText(strat.outcome_summary)
+        self.lbl_opp_breakdown.setText(strat.chi_breakdown)
+
+        if strat.matchup.is_scoop:
+            self.lbl_opp_outcome.setStyleSheet("font-size: 11px; font-weight: 700; color: #30D158;")
+            self.box_solution.setTitle("Gợi ý xếp bài (🏆 Thế bài BẮT SẬP đối thủ)")
+        elif strat.matchup.total_points > 0:
+            self.lbl_opp_outcome.setStyleSheet("font-size: 11px; font-weight: 700; color: #0A84FF;")
+            self.box_solution.setTitle("Gợi ý xếp bài (✓ Khắc chế thắng đối thủ)")
+        elif strat.matchup.is_scooped:
+            self.lbl_opp_outcome.setStyleSheet("font-size: 11px; font-weight: 700; color: #FF453A;")
+            self.box_solution.setTitle("Gợi ý xếp bài tối ưu")
+        else:
+            self.lbl_opp_outcome.setStyleSheet("font-size: 11px; font-weight: 600; color: #FF9F0A;")
+            self.box_solution.setTitle("Gợi ý xếp bài tối ưu")
+
+
+class OpponentDeductionPanel(QGroupBox):
+    """Visual panel displaying deduced 13 cards of Opponent (Player 4) and team counter-strategy."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__("🎯 ĐỐI THỦ — NHÀ THỨ 4 (13 LÁ SUY LUẬN TỪ BỘ BÀI 52 CÂY)", parent)
+        self.setStyleSheet("""
+            QGroupBox {
+                background-color: #1A1A1C;
+                border: 1px solid #3A3A3C;
+                border-radius: 8px;
+                font-weight: 600;
+                font-size: 12px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                color: #FFD60A;
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 4px;
+            }
+        """)
+        self._init_ui()
+
+    def _init_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setSpacing(6)
+        layout.setContentsMargins(10, 8, 10, 8)
+
+        # Header status bar
+        self.lbl_status = QLabel("Chưa phát hiện đủ bài: Hãy kết nối 3 cửa sổ game để hệ thống suy luận 13 lá đối thủ.")
+        self.lbl_status.setStyleSheet("font-size: 12px; font-weight: 600; color: #8E8E93;")
+        layout.addWidget(self.lbl_status)
+
+        # Content split: Left (13 cards thumbnails), Right (Opponent 3-chi breakdown)
+        content_layout = QHBoxLayout()
+        content_layout.setSpacing(16)
+
+        # Left: Opponent Cards Scroll Area
+        left_box = QVBoxLayout()
+        lbl_cards = QLabel("13 Quân bài đối thủ đang cầm (Loại trừ từ 3 cửa sổ):")
+        lbl_cards.setStyleSheet("font-size: 11px; color: #A0A0A0; font-weight: 500;")
+        left_box.addWidget(lbl_cards)
+
+        self.scroll_cards = QScrollArea()
+        self.scroll_cards.setFixedHeight(65)
+        self.scroll_cards.setWidgetResizable(True)
+        self.scroll_cards.setStyleSheet("background: #141414; border: 1px solid #2C2C2E; border-radius: 4px;")
+        self.cards_container = QWidget()
+        self.cards_layout = QHBoxLayout(self.cards_container)
+        self.cards_layout.setSpacing(3)
+        self.cards_layout.setContentsMargins(4, 2, 4, 2)
+        self.scroll_cards.setWidget(self.cards_container)
+        left_box.addWidget(self.scroll_cards)
+        content_layout.addLayout(left_box, 3)
+
+        # Right: Opponent optimal arrangement
+        right_box = QVBoxLayout()
+        lbl_opp_sol = QLabel("Thế bài tối ưu nhất đối thủ sẽ xếp:")
+        lbl_opp_sol.setStyleSheet("font-size: 11px; color: #A0A0A0; font-weight: 500;")
+        right_box.addWidget(lbl_opp_sol)
+
+        self.lbl_chi_front = QLabel("Chi Đầu (3 lá): —")
+        self.lbl_chi_middle = QLabel("Chi Giữa (5 lá): —")
+        self.lbl_chi_back = QLabel("Chi Cuối (5 lá): —")
+
+        for lbl in (self.lbl_chi_front, self.lbl_chi_middle, self.lbl_chi_back):
+            lbl.setStyleSheet("font-size: 11px; font-weight: 600; color: #FFFFFF;")
+            right_box.addWidget(lbl)
+
+        content_layout.addLayout(right_box, 2)
+        layout.addLayout(content_layout)
+
+    def update_result(self, result: CollaborativeTableResult) -> None:
+        """Updates opponent deduced cards, arrangement, and team strategy summary."""
+        self.lbl_status.setText(result.summary_message)
+
+        if result.cross_duplicates:
+            self.lbl_status.setStyleSheet("font-size: 12px; font-weight: 600; color: #FF453A;")
+        elif result.is_opponent_fully_deduced:
+            self.lbl_status.setStyleSheet("font-size: 12px; font-weight: 700; color: #30D158;")
+        else:
+            self.lbl_status.setStyleSheet("font-size: 12px; font-weight: 600; color: #FF9F0A;")
+
+        # Update opponent cards
+        while self.cards_layout.count():
+            item = self.cards_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for card in result.remaining_cards:
+            w = CardWidget(card=card, width=32, height=48, selectable=False)
+            self.cards_layout.addWidget(w)
+        self.cards_layout.addStretch()
+
+        # Update opponent optimal arrangement
+        if result.opponent_best_arrangement is not None:
+            part = result.opponent_best_arrangement
+            f_names = " ".join(c.unicode_name for c in part.front)
+            m_names = " ".join(c.unicode_name for c in part.middle)
+            b_names = " ".join(c.unicode_name for c in part.back)
+
+            self.lbl_chi_front.setText(f"Chi Đầu: {f_names} ({part.front_eval.description})")
+            self.lbl_chi_middle.setText(f"Chi Giữa: {m_names} ({part.middle_eval.description})")
+            self.lbl_chi_back.setText(f"Chi Cuối: {b_names} ({part.back_eval.description})")
+        else:
+            self.lbl_chi_front.setText("Chi Đầu (3 lá): —")
+            self.lbl_chi_middle.setText("Chi Giữa (5 lá): —")
+            self.lbl_chi_back.setText("Chi Cuối (5 lá): —")
+
 
 class MultiWindowWidget(QWidget):
     """Widget orchestrating simultaneous 3-window game detection on macOS."""
@@ -149,6 +300,9 @@ class MultiWindowWidget(QWidget):
         self.detector = CardDetector()
         self.recognizer = CardRecognizer()
         self.solver = Solver()
+        self.table_analyzer = CollaborativeTableAnalyzer()
+        self.window_cards: Dict[int, List[Card]] = {1: [], 2: [], 3: []}
+        self._last_table_hash: Optional[tuple] = None
         self._thread: Optional[QThread] = None
         self._worker: Optional[MultiWindowWorker] = None
         self.discovered_windows: List[WindowItem] = []
@@ -206,6 +360,10 @@ class MultiWindowWidget(QWidget):
             grid.addWidget(panel, 0, i - 1)
 
         main_layout.addLayout(grid)
+
+        # Deduced Opponent & Collaborative Counter-Strategy Panel
+        self.opponent_panel = OpponentDeductionPanel(parent=self)
+        main_layout.addWidget(self.opponent_panel)
 
         # Initial window scan
         self._refresh_window_list()
@@ -269,6 +427,8 @@ class MultiWindowWidget(QWidget):
                 if len(valid_cards) == 13:
                     break
 
+        self.window_cards[window_idx] = valid_cards
+
         if len(valid_cards) == 13:
             try:
                 arrangements = self.solver.solve_heuristic(valid_cards)
@@ -288,6 +448,9 @@ class MultiWindowWidget(QWidget):
         else:
             panel.lbl_status.setText(f"✓ Đã kết nối [{win_title}]: Đang chờ chia bài...")
             panel.lbl_status.setStyleSheet("color: #FF9F0A; font-weight: 600;")
+
+        # Run table-wide collaborative deduction & counter-strategy
+        self._evaluate_table_strategy()
 
     def _toggle_bot(self) -> None:
         if self._worker and self._worker._is_running:
@@ -354,6 +517,36 @@ class MultiWindowWidget(QWidget):
         if window_id in self.panels:
             self.panels[window_id].update_state(state, crop_img)
 
+        # Collect detected cards for window_id
+        valid_cards: List[Card] = []
+        seen_codes = set()
+        for d in sorted(state.detected_cards, key=lambda x: x.confidence, reverse=True):
+            if d.card is not None and d.card_code not in seen_codes:
+                seen_codes.add(d.card_code)
+                valid_cards.append(d.card)
+                if len(valid_cards) == 13:
+                    break
+
+        self.window_cards[window_id] = valid_cards
+        self._evaluate_table_strategy()
+
+    def _evaluate_table_strategy(self) -> None:
+        """Executes table-wide collaborative deduction of 4th opponent hand and counter-strategy."""
+        current_hash = tuple((w, tuple(c.card_id for c in cards)) for w, cards in sorted(self.window_cards.items()))
+        if current_hash == self._last_table_hash:
+            return
+        self._last_table_hash = current_hash
+
+        result = self.table_analyzer.analyze_table(self.window_cards)
+        self.opponent_panel.update_result(result)
+
+        for win_idx, panel in self.panels.items():
+            if win_idx in result.window_strategies:
+                panel.update_counter_strategy(result.window_strategies[win_idx])
+
     def _on_solution_found(self, window_id: int, solution: HandArrangement) -> None:
         if window_id in self.panels:
-            self.panels[window_id].update_solution(solution)
+            panel = self.panels[window_id]
+            # Only update standard solution if not in active counter-adapted mode
+            if not hasattr(panel, "lbl_opp_outcome") or "BẮT SẬP" not in panel.lbl_opp_outcome.text():
+                panel.update_solution(solution)

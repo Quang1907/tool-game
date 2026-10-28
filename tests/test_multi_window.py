@@ -178,3 +178,38 @@ class TestDirectWindowCaptureAndSelection:
 
         widget.close()
 
+    def test_multi_window_deduces_opponent_and_optimizes_counter_strategy(self, qapp):
+        from app.core.card import CardParser, Deck
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+
+        widget = MultiWindowWidget()
+        deck = Deck()
+        deck.shuffle(seed=123)
+
+        w1_cards = deck.deal(13)
+        w2_cards = deck.deal(13)
+        w3_cards = deck.deal(13)
+        actual_opp_cards = deck.deal(13)
+
+        widget.window_cards[1] = w1_cards
+        widget.window_cards[2] = w2_cards
+        widget.window_cards[3] = w3_cards
+
+        widget._evaluate_table_strategy()
+
+        # Verify Opponent Panel displays deduction
+        opp_panel = widget.opponent_panel
+        assert "ĐÃ KHÓA CHẶT 13 LÁ ĐỐI THỦ" in opp_panel.lbl_status.text()
+        assert opp_panel.lbl_chi_front.text().startswith("Chi Đầu:")
+        assert opp_panel.lbl_chi_middle.text().startswith("Chi Giữa:")
+        assert opp_panel.lbl_chi_back.text().startswith("Chi Cuối:")
+
+        # Verify all 3 panels received counter strategy
+        for idx in (1, 2, 3):
+            p = widget.panels[idx]
+            assert p.lbl_opp_outcome.text() != "Đang chờ đủ 3 cửa sổ..."
+            assert "Đầu:" in p.lbl_opp_breakdown.text()
+
+        widget.close()
+
+

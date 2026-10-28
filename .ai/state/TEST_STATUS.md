@@ -1,9 +1,9 @@
 # TEST STATUS & VERIFICATION REPORT — BINH 13 ANALYZER
 
-**Thời điểm kiểm tra gần nhất:** 2026-10-28 09:15:12 +09:00  
+**Thời điểm kiểm tra gần nhất:** 2026-10-28 09:57:00 +09:00  
 **Lệnh thực thi:** `.venv/bin/pytest tests/`  
-**Kết quả chung:** **119 / 119 tests PASSED (100%)**  
-**Thời gian chạy:** 22.47 giây  
+**Kết quả chung:** **124 / 124 tests PASSED (100%)**  
+**Thời gian chạy:** 24.63 giây  
 **Nền tảng:** macOS Sequoia 15.4.1 (ARM64 Apple Silicon) | Python 3.11.17
 
 ---
@@ -16,10 +16,11 @@
 | `tests/test_evaluator.py` | 14 | **14 PASSED** | Đánh giá Chi Đầu (3 lá), Chi Giữa/Cuối (5 lá), kiểm tra Foul |
 | `tests/test_rules.py` | 5 | **5 PASSED** | Tính điểm đối đầu, bắt sập 1 người, sập làng, phạt lủng, sảnh rồng |
 | `tests/test_solver.py` | 4 | **4 PASSED** | Khảo sát 36,036 thế bài, bảo toàn 13 quân bài, loại bài lủng |
+| `tests/test_collaborative_analyzer.py` | 4 | **4 PASSED** | Suy luận 13 lá đối thủ, giải thế bài đối thủ, tối ưu phản công |
 | `tests/test_simulator.py` | 4 | **4 PASSED** | Mô phỏng Monte Carlo, CRN tính EV, xếp hạng thế bài |
 | `tests/test_database.py` | 1 | **1 PASSED** | Vòng đời Session SQLite, CRUD lịch sử ván bài |
 | `tests/test_integration.py` | 1 | **1 PASSED** | Luồng tích hợp End-to-End từ bài nạp đến giải và mô phỏng |
-| `tests/test_multi_window.py` | 7 | **7 PASSED** | Quản lý 3 cửa sổ bàn chơi, Retina 2x crop, CGWindowID direct capture, selection preview |
+| `tests/test_multi_window.py` | 8 | **8 PASSED** | 3 cửa sổ bàn chơi, CGWindowID direct capture, suy luận đối thủ |
 | `tests/test_ui.py` | 7 | **7 PASSED** | MainWindow, CardEditDialog, CardReferenceManager, ZoomableImageViewer |
 | `tests/test_vision.py` | 28 | **28 PASSED** | Xử lý ảnh, template matching, NMS, tách bài xòe, 9 mẫu bài thực tế |
 | `tests/test_card_detection_and_reference.py` | 37 | **37 PASSED** | Bộ test bắt buộc (Test A-E), kiểm chứng mẫu, 6♥/5♥ hồi quy, màu Đen/Đỏ & Rank 10 |
