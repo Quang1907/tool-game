@@ -207,6 +207,15 @@ class Solver:
             return legal_arrangements[:max_results]
         return legal_arrangements
 
+    def solve_heuristic(
+        self,
+        cards: Sequence[Card],
+        strategy: str = "BALANCED",
+        max_results: int | None = None,
+    ) -> list[HandArrangement]:
+        """Heuristic solver alias returning legal arrangements ranked by strategic weight."""
+        return self.solve(cards, strategy=strategy, max_results=max_results)
+
     def count_total_partitions(self, cards: Sequence[Card]) -> int:
         """Utility method verifying that exactly 36,036 partitions are explored."""
         is_valid, err = CardValidator.validate_13_cards(cards)

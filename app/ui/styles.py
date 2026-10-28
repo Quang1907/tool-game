@@ -4,7 +4,7 @@ MACOS_DARK_THEME = """
 QWidget {
     background-color: #1E1E1E;
     color: #F0F0F0;
-    font-family: ".AppleSystemUIFont", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    font-family: ".AppleSystemUIFont", "Helvetica Neue", Arial, sans-serif;
     font-size: 13px;
 }
 

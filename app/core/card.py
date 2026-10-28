@@ -171,6 +171,11 @@ class Card:
         return f"{self._rank.char}{self._suit.char}"
 
     @property
+    def code(self) -> str:
+        """Alias for short_name: e.g. 'As', '10h'."""
+        return self.short_name
+
+    @property
     def unicode_name(self) -> str:
         """Unicode representation: e.g. 'A♠', '10♥'."""
         return f"{self._rank.char}{self._suit.symbol}"

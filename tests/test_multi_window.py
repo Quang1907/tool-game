@@ -148,5 +148,33 @@ class TestDirectWindowCaptureAndSelection:
         panel = widget.panels[1]
         assert "Đã kết nối" in panel.lbl_status.text()
         assert panel.viewer._current_image is not None
+
+        # Test with 13 detected cards to verify solver.solve_heuristic integration
+        from app.core.card import CardParser
+        from app.vision.card_recognizer import DetectedCard
+
+        sample_cards = CardParser.parse_cards("As Ks Qs Js 10s 9h 8h 7h 6h 5h 4c 3c 2c")
+        mock_detected = [
+            DetectedCard(
+                card=c,
+                confidence=0.99,
+                rank_confidence=0.99,
+                suit_confidence=0.99,
+                bbox=(i * 20, 0, 40, 60),
+                raw_crop=np.zeros((60, 40, 3), dtype=np.uint8),
+            )
+            for i, c in enumerate(sample_cards)
+        ]
+
+        with patch.object(ScreenCapture, "capture_window_by_id", return_value=synth_img), \
+             patch.object(widget.detector, "detect_cards", return_value=[d.raw_crop for d in mock_detected]), \
+             patch.object(widget.recognizer, "recognize_all", return_value=mock_detected):
+            widget._on_window_selected(1)
+
+        assert "13 lá — Đã có gợi ý tối ưu" in panel.lbl_status.text()
+        assert panel.lbl_chi_front.text().startswith("Chi Đầu:")
+        assert panel.lbl_chi_middle.text().startswith("Chi Giữa:")
+        assert panel.lbl_chi_back.text().startswith("Chi Cuối:")
+
         widget.close()
 

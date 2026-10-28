@@ -85,8 +85,8 @@ class CardWidget(QWidget):
         painter.setPen(suit_color)
 
         # Draw Top-Left Rank & Suit
-        font_rank = QFont("SF Pro Text", 11, QFont.Bold)
-        font_suit = QFont("SF Pro Text", 12)
+        font_rank = QFont(".AppleSystemUIFont", 11, QFont.Bold)
+        font_suit = QFont(".AppleSystemUIFont", 12)
 
         painter.setFont(font_rank)
         painter.drawText(6, 16, self.card.rank.char)
@@ -95,6 +95,6 @@ class CardWidget(QWidget):
         painter.drawText(6, 30, self.card.suit.symbol)
 
         # Draw Large Center Suit Symbol
-        font_center = QFont("SF Pro Text", int(self._height * 0.35))
+        font_center = QFont(".AppleSystemUIFont", int(self._height * 0.35))
         painter.setFont(font_center)
         painter.drawText(0, 0, w, h, Qt.AlignCenter, self.card.suit.symbol)

@@ -270,11 +270,18 @@ class MultiWindowWidget(QWidget):
                     break
 
         if len(valid_cards) == 13:
-            arrangements = self.solver.solve_heuristic(valid_cards)
-            if arrangements:
-                panel.update_solution(arrangements[0])
-                panel.lbl_status.setText(f"✓ Đã xác nhận [{win_title}]: 13 lá — Đã có gợi ý tối ưu")
-                panel.lbl_status.setStyleSheet("color: #30D158; font-weight: 600;")
+            try:
+                arrangements = self.solver.solve_heuristic(valid_cards)
+                if arrangements:
+                    panel.update_solution(arrangements[0])
+                    panel.lbl_status.setText(f"✓ Đã xác nhận [{win_title}]: 13 lá — Đã có gợi ý tối ưu")
+                    panel.lbl_status.setStyleSheet("color: #30D158; font-weight: 600;")
+                else:
+                    panel.lbl_status.setText(f"✓ Đã xác nhận [{win_title}]: 13 lá — Không tìm thấy bộ hợp lệ")
+                    panel.lbl_status.setStyleSheet("color: #FF9F0A; font-weight: 600;")
+            except Exception as e:
+                panel.lbl_status.setText(f"Lỗi tính toán: {e}")
+                panel.lbl_status.setStyleSheet("color: #FF453A; font-weight: 600;")
         elif detected_cards:
             panel.lbl_status.setText(f"✓ Đã kết nối [{win_title}]: Phát hiện {len(detected_cards)} lá (Cần 13 lá)")
             panel.lbl_status.setStyleSheet("color: #0A84FF; font-weight: 600;")

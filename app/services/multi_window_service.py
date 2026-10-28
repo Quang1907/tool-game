@@ -128,9 +128,12 @@ class MultiWindowWorker(QObject):
 
                     if len(valid_cards) == 13:
                         self.status_updated.emit(f"Cửa sổ #{roi.window_id}: Đang tính toán 13 lá...")
-                        arrangements = self.solver.solve_heuristic(valid_cards)
-                        if arrangements:
-                            self.solution_found.emit(roi.window_id, arrangements[0])
+                        try:
+                            arrangements = self.solver.solve_heuristic(valid_cards)
+                            if arrangements:
+                                self.solution_found.emit(roi.window_id, arrangements[0])
+                        except Exception as e:
+                            self.status_updated.emit(f"Cửa sổ #{roi.window_id}: Lỗi giải bài — {e}")
 
                 # Calculate loop FPS
                 elapsed = time.perf_counter() - loop_start

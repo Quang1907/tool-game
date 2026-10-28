@@ -14,7 +14,9 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi chép t�
   - **Xác nhận tức thì khi chọn cửa sổ trong dropdown:** Thêm callback `_on_window_selected` cho sự kiện `combo_w1/w2/w3.currentIndexChanged`. Ngay khi người dùng chọn cửa sổ, app chụp ảnh tức thì, nạp vào viewer để người dùng xác nhận đúng cửa sổ, tự động chạy card detection để hiển thị thumbnail lá bài phát hiện và tính toán gợi ý xếp bài tối ưu (Chi Đầu, Chi Giữa, Chi Cuối).
   - **Không chặn quét khi cửa sổ bị che một phần ([multi_window_service.py](file:///Users/levanquang/tool/app/services/multi_window_service.py)):** Tiếp tục phát hiện và nhận diện bài nếu frame ảnh hợp lệ.
   - **Cập nhật bộ lọc cửa sổ Swift ([macos_window_helper.swift](file:///Users/levanquang/tool/scripts/macos_window_helper.swift)):** Bỏ flag `optionOnScreenOnly` để nhận diện các cửa sổ game nằm phía dưới, đồng thời loại trừ chính cửa sổ Binh 13 Analyzer.
-  - **Bổ sung kiểm thử và cấu hình session fixture:** Thêm 2 bài test trong `tests/test_multi_window.py` và tạo `tests/conftest.py`, nâng tổng số test suite đạt **119/119 PASSED (100%)**.
+  - **Khắc phục lỗi crash `AttributeError: 'Solver' object has no attribute 'solve_heuristic'` ([solver.py](file:///Users/levanquang/tool/app/core/solver.py)):** Bổ sung phương thức `solve_heuristic` ủy quyền cho `solve()`, đồng thời thêm bọc an toàn `try...except` khi gọi bộ giải trong [multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py) và [multi_window_service.py](file:///Users/levanquang/tool/app/services/multi_window_service.py).
+  - **Triệt tiêu cảnh báo font Qt `SF Pro Text` ([styles.py](file:///Users/levanquang/tool/app/ui/styles.py), [card_widget.py](file:///Users/levanquang/tool/app/ui/components/card_widget.py)):** Thay thế `SF Pro Text` bằng native macOS font `.AppleSystemUIFont`, loại bỏ hoàn toàn cảnh báo font và tăng tốc độ khởi tạo giao diện.
+  - **Bổ sung kiểm thử và cấu hình session fixture:** Thêm test xác minh tích hợp giải bài 13 lá trong `tests/test_multi_window.py` và tạo `tests/conftest.py`, nâng tổng số test suite đạt **119/119 PASSED (100%)**.
 
 ---
 

@@ -42,3 +42,9 @@
    - **Xác nhận tức thì khi chọn cửa sổ trong Dropdown:** Kết nối sự kiện `combo_w1/w2/w3.currentIndexChanged` với hàm `_on_window_selected`. Ngay khi người dùng chọn một cửa sổ trong danh sách, hệ thống chụp ngay cửa sổ đó, cập nhật ảnh vào Viewer, tự động chạy nhận diện lá bài hiển thị trên thanh thumbnail, và giải bài đưa ra gợi ý xếp bài tối ưu (Chi Đầu, Chi Giữa, Chi Cuối).
    - **Tối ưu danh sách phát hiện cửa sổ macOS:** Cập nhật helper Swift `macos_window_helper.swift` lọc bỏ chính cửa sổ Binh 13 Analyzer và các tiến trình daemon hệ thống không có giao diện.
    - **Bổ sung `TestDirectWindowCaptureAndSelection` và cập nhật `tests/conftest.py`:** Nâng tổng số test toàn dự án lên **119/119 PASSED (100%)**.
+
+2. **Khắc phục lỗi crash `AttributeError: 'Solver' object has no attribute 'solve_heuristic'` và cảnh báo font:**
+   - **Bổ sung phương thức `solve_heuristic` trong [solver.py](file:///Users/levanquang/tool/app/core/solver.py):** Phương thức ủy quyền cho `solve()` trả về danh sách các thế bài hợp lệ được sắp xếp theo heuristic score tối ưu nhất.
+   - **Bổ sung bọc an toàn `try...except`:** Cả trong [multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py) và [multi_window_service.py](file:///Users/levanquang/tool/app/services/multi_window_service.py) khi giải bài, đảm bảo không bao giờ làm crash tiến trình ứng dụng hay QThread nếu có bất thường.
+   - **Triệt tiêu cảnh báo font Qt `SF Pro Text`:** Thay thế `SF Pro Text` bằng native macOS font alias `.AppleSystemUIFont` trong [styles.py](file:///Users/levanquang/tool/app/ui/styles.py) và [card_widget.py](file:///Users/levanquang/tool/app/ui/components/card_widget.py), tăng tốc độ khởi tạo GUI và loại bỏ 100% cảnh báo font.
+   - **Bổ sung thuộc tính `code` vào class [Card](file:///Users/levanquang/tool/app/core/card.py):** Cho phép truy xuất mã chuỗi thuận tiện (`short_name`).
