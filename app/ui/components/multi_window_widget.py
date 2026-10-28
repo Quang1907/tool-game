@@ -20,12 +20,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.core.solver import HandArrangement
+from app.core.card import Card
+from app.core.solver import HandArrangement, Solver
 from app.services.multi_window_service import MultiWindowWorker
 from app.ui.components.card_widget import CardWidget
 from app.ui.components.zoomable_viewer import ZoomableImageViewer
+from app.vision.card_detector import CardDetector
+from app.vision.card_recognizer import CardRecognizer
 from app.vision.card_state import WindowCardState
 from app.vision.roi_manager import WindowROI
+from app.vision.screen_capture import ScreenCapture
 from app.vision.window_manager import WindowItem, WindowManager
 
 
@@ -97,12 +101,15 @@ class SingleWindowPanel(QGroupBox):
         elif state.status == "MOVED_NO_RECALCULATE":
             self.lbl_status.setText(f"✓ {len(state.detected_cards)} lá (Bài di chuyển - Không tính lại)")
             self.lbl_status.setStyleSheet("color: #0A84FF; font-weight: 600;")
-        elif state.status == "CONFIRMED_13":
+        elif state.status == "CONFIRMED_13" or len(state.detected_cards) == 13:
             self.lbl_status.setText("★ Đủ 13 lá bài — Đã tối ưu")
             self.lbl_status.setStyleSheet("color: #30D158; font-weight: 600;")
-        else:
-            self.lbl_status.setText(f"Đang phát hiện: {len(state.detected_cards)} lá")
+        elif len(state.detected_cards) > 0:
+            self.lbl_status.setText(f"Đang phát hiện: {len(state.detected_cards)} lá (Cần 13 lá)")
             self.lbl_status.setStyleSheet("color: #FF9F0A; font-weight: 600;")
+        else:
+            self.lbl_status.setText("Đang theo dõi cửa sổ (Chưa thấy bài)")
+            self.lbl_status.setStyleSheet("color: #8E8E93; font-weight: 600;")
 
         if crop_img is not None and crop_img.size > 0:
             self.viewer.set_image(crop_img, state.detected_cards)
@@ -139,6 +146,9 @@ class MultiWindowWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.window_manager = WindowManager()
+        self.detector = CardDetector()
+        self.recognizer = CardRecognizer()
+        self.solver = Solver()
         self._thread: Optional[QThread] = None
         self._worker: Optional[MultiWindowWorker] = None
         self.discovered_windows: List[WindowItem] = []
@@ -159,14 +169,17 @@ class MultiWindowWidget(QWidget):
 
         toolbar.addWidget(QLabel("Cửa sổ 1:"))
         self.combo_w1 = QComboBox()
+        self.combo_w1.currentIndexChanged.connect(lambda: self._on_window_selected(1))
         toolbar.addWidget(self.combo_w1)
 
         toolbar.addWidget(QLabel("Cửa sổ 2:"))
         self.combo_w2 = QComboBox()
+        self.combo_w2.currentIndexChanged.connect(lambda: self._on_window_selected(2))
         toolbar.addWidget(self.combo_w2)
 
         toolbar.addWidget(QLabel("Cửa sổ 3:"))
         self.combo_w3 = QComboBox()
+        self.combo_w3.currentIndexChanged.connect(lambda: self._on_window_selected(3))
         toolbar.addWidget(self.combo_w3)
 
         toolbar.addStretch()
@@ -201,18 +214,73 @@ class MultiWindowWidget(QWidget):
         """Finds on-screen windows and populates combo boxes."""
         self.discovered_windows = self.window_manager.list_windows()
         for combo in (self.combo_w1, self.combo_w2, self.combo_w3):
+            combo.blockSignals(True)
             combo.clear()
             combo.addItem("-- Chọn cửa sổ game --", None)
             for win in self.discovered_windows:
                 combo.addItem(win.display_label, win.window_id)
+            combo.blockSignals(False)
 
-        # Default select first 3 windows if available
-        if len(self.discovered_windows) >= 1:
-            self.combo_w1.setCurrentIndex(1)
-        if len(self.discovered_windows) >= 2:
-            self.combo_w2.setCurrentIndex(2)
-        if len(self.discovered_windows) >= 3:
-            self.combo_w3.setCurrentIndex(3)
+    def _on_window_selected(self, window_idx: int) -> None:
+        """Immediately captures the selected window, verifies it, displays it in live preview,
+        detects cards, and shows optimal solution if available."""
+        combo = [self.combo_w1, self.combo_w2, self.combo_w3][window_idx - 1]
+        wid = combo.currentData()
+        panel = self.panels.get(window_idx)
+        if not panel:
+            return
+
+        if not wid:
+            panel.lbl_status.setText("Chưa kết nối")
+            panel.lbl_status.setStyleSheet("color: #8E8E93; font-weight: 600; font-size: 11px;")
+            return
+
+        match = next((w for w in self.discovered_windows if w.window_id == wid), None)
+        win_title = match.title or match.owner_name if match else f"Cửa sổ #{wid}"
+
+        # Capture selected window directly
+        img = ScreenCapture.capture_window_by_id(wid)
+        if img is None or img.size == 0:
+            panel.lbl_status.setText(f"⚠️ Không thể chụp [{win_title}] (Đã đóng/Thu nhỏ)")
+            panel.lbl_status.setStyleSheet("color: #FF453A; font-weight: 600;")
+            return
+
+        # Run Card Detection
+        crops = self.detector.detect_cards(img)
+
+        # Run Card Recognition
+        detected_cards = self.recognizer.recognize_all(crops)
+
+        # Create WindowCardState
+        state = WindowCardState(
+            window_id=window_idx,
+            detected_cards=detected_cards,
+            status=f"DETECTED_{len(detected_cards)}_CARDS",
+        )
+        panel.update_state(state, img)
+
+        # Check for 13 unique cards
+        valid_cards: List[Card] = []
+        seen_codes = set()
+        for d in sorted(detected_cards, key=lambda x: x.confidence, reverse=True):
+            if d.card is not None and d.card_code not in seen_codes:
+                seen_codes.add(d.card_code)
+                valid_cards.append(d.card)
+                if len(valid_cards) == 13:
+                    break
+
+        if len(valid_cards) == 13:
+            arrangements = self.solver.solve_heuristic(valid_cards)
+            if arrangements:
+                panel.update_solution(arrangements[0])
+                panel.lbl_status.setText(f"✓ Đã xác nhận [{win_title}]: 13 lá — Đã có gợi ý tối ưu")
+                panel.lbl_status.setStyleSheet("color: #30D158; font-weight: 600;")
+        elif detected_cards:
+            panel.lbl_status.setText(f"✓ Đã kết nối [{win_title}]: Phát hiện {len(detected_cards)} lá (Cần 13 lá)")
+            panel.lbl_status.setStyleSheet("color: #0A84FF; font-weight: 600;")
+        else:
+            panel.lbl_status.setText(f"✓ Đã kết nối [{win_title}]: Đang chờ chia bài...")
+            panel.lbl_status.setStyleSheet("color: #FF9F0A; font-weight: 600;")
 
     def _toggle_bot(self) -> None:
         if self._worker and self._worker._is_running:
@@ -238,6 +306,7 @@ class MultiWindowWidget(QWidget):
                             bounds_pts=match.bounds,
                             titlebar_inset_pts=28,
                             is_active=True,
+                            cg_window_id=match.window_id,
                         )
                     )
 

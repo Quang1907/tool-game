@@ -17,6 +17,7 @@ class WindowROI:
     is_active: bool = True
     is_occluded: bool = False
     occlusion_ratio: float = 0.0
+    cg_window_id: int = 0                  # Actual macOS CGWindowID for direct window capture
 
 
 class ROIManager:

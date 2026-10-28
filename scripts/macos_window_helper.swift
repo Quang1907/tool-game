@@ -16,7 +16,7 @@ struct WindowInfo: Codable {
 
 func getOnScreenWindows() -> [WindowInfo] {
     var result: [WindowInfo] = []
-    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    let options: CGWindowListOption = [.excludeDesktopElements]
     guard let windowListInfo = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
         return result
     }
@@ -33,7 +33,11 @@ func getOnScreenWindows() -> [WindowInfo] {
         let w = boundsDict["Width"] as? Double ?? 0.0
         let h = boundsDict["Height"] as? Double ?? 0.0
 
-        if w >= 100 && h >= 100 && layer == 0 {
+        // Exclude system windows, tiny popups, and self-window
+        if w >= 150 && h >= 150 && layer == 0 {
+            if title.contains("Binh 13 Analyzer") {
+                continue
+            }
             result.append(WindowInfo(
                 windowId: wid,
                 ownerName: owner,

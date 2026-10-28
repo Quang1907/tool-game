@@ -12,6 +12,7 @@ from app.vision.card_detector import CardDetector
 from app.vision.card_recognizer import CardRecognizer, DetectedCard
 from app.vision.card_state import CardStateManager, WindowCardState
 from app.vision.roi_manager import ROIManager, WindowROI
+from app.vision.screen_capture import ScreenCapture
 from app.vision.screen_capture_service import ScreenCaptureService
 from app.vision.window_manager import WindowItem, WindowManager
 
@@ -52,19 +53,24 @@ class MultiWindowWorker(QObject):
             loop_start = time.perf_counter()
 
             try:
-                # 1. Capture 1 single full-screen frame
-                full_frame, scale = self.capture_service.capture_frame()
-                if full_frame is None:
-                    time.sleep(self.poll_interval)
-                    continue
-
-                self.roi_manager.retina_scale = scale
-
-                # 2. Check Z-order occlusion for each active ROI
                 all_wins = self.window_manager.list_windows()
+                window_crops: Dict[int, Optional[np.ndarray]] = {}
+
+                # 1. Capture each active window directly by its CGWindowID
                 for roi in self.rois:
+                    if not roi.is_active:
+                        continue
+
+                    target_wid = roi.cg_window_id if roi.cg_window_id > 0 else roi.window_id
+                    img = None
+                    if target_wid > 0:
+                        img = ScreenCapture.capture_window_by_id(target_wid)
+
+                    window_crops[roi.window_id] = img
+
+                    # Compute occlusion for telemetry
                     win_item = WindowItem(
-                        window_id=roi.window_id,
+                        window_id=target_wid,
                         owner_name="",
                         title=roi.name,
                         bounds=roi.bounds_pts,
@@ -73,20 +79,27 @@ class MultiWindowWorker(QObject):
                     roi.is_occluded = occluded_item.is_occluded
                     roi.occlusion_ratio = occluded_item.occlusion_ratio
 
-                # 3. Crop 3 ROIs from the single frame
-                window_crops = self.roi_manager.crop_all_rois(full_frame, self.rois)
+                # Fallback to full-screen crop for any ROI without direct capture (e.g. mock/test)
+                missing = [r for r in self.rois if r.is_active and window_crops.get(r.window_id) is None]
+                if missing:
+                    full_frame, scale = self.capture_service.capture_frame()
+                    if full_frame is not None:
+                        self.roi_manager.retina_scale = scale
+                        fb_crops = self.roi_manager.crop_all_rois(full_frame, missing)
+                        for r in missing:
+                            window_crops[r.window_id] = fb_crops.get(r.window_id)
 
-                # 4. Independent Card Detection & Recognition for each window
+                # 2. Independent Card Detection & Recognition for each window
                 for roi in self.rois:
                     if not roi.is_active:
                         continue
 
                     crop_img = window_crops.get(roi.window_id)
-                    if crop_img is None or roi.is_occluded:
+                    if crop_img is None or crop_img.size == 0:
                         state, _ = self.state_manager.update_window_cards(
-                            roi.window_id, [], is_occluded=roi.is_occluded
+                            roi.window_id, [], is_occluded=False
                         )
-                        self.frame_processed.emit(roi.window_id, state, crop_img)
+                        self.frame_processed.emit(roi.window_id, state, None)
                         continue
 
                     # Card Detection (discovering real card objects, no fixed grid)
@@ -103,14 +116,21 @@ class MultiWindowWorker(QObject):
                     # Emit visual update for UI
                     self.frame_processed.emit(roi.window_id, state, crop_img)
 
-                    # 5. Selective Solving (only if 13 confirmed cards changed)
-                    if should_solve and len(detected_cards) == 13:
-                        hand_cards = [d.card for d in detected_cards if d.card is not None]
-                        if len(hand_cards) == 13:
-                            self.status_updated.emit(f"Cửa sổ #{roi.window_id}: Đang tính toán 13 lá...")
-                            arrangements = self.solver.solve_heuristic(hand_cards)
-                            if arrangements:
-                                self.solution_found.emit(roi.window_id, arrangements[0])
+                    # 3. Solving: if 13 cards are present, calculate optimal 3-chi arrangement
+                    valid_cards: List[Card] = []
+                    seen_codes = set()
+                    for d in sorted(detected_cards, key=lambda x: x.confidence, reverse=True):
+                        if d.card is not None and d.card_code not in seen_codes:
+                            seen_codes.add(d.card_code)
+                            valid_cards.append(d.card)
+                            if len(valid_cards) == 13:
+                                break
+
+                    if len(valid_cards) == 13:
+                        self.status_updated.emit(f"Cửa sổ #{roi.window_id}: Đang tính toán 13 lá...")
+                        arrangements = self.solver.solve_heuristic(valid_cards)
+                        if arrangements:
+                            self.solution_found.emit(roi.window_id, arrangements[0])
 
                 # Calculate loop FPS
                 elapsed = time.perf_counter() - loop_start

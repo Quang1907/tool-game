@@ -4,6 +4,20 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi chép t�
 
 ---
 
+## [1.2.3] — 2026-10-28
+
+### Fixed
+
+- **Khắc phục lỗi Tab 6 ("Bot 3 Cửa Sổ") không lấy được hình ảnh từ cửa sổ, báo che khuất (Occluded), không nhận diện bài và không gợi ý xếp bài:**
+  - **Chụp ảnh trực tiếp theo CGWindowID ([screen_capture.py](file:///Users/levanquang/tool/app/vision/screen_capture.py)):** Tích hợp lệnh `screencapture -l <window_id> -o -x` để lấy trực tiếp frame hình ảnh của chính xác cửa sổ game từ macOS WindowServer, bất kể cửa sổ app Binh 13 Analyzer hay các cửa sổ khác có đang đè lên trên hay không.
+  - **Sửa lỗi lệch Window ID và tính toán Occlusion ([multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py), [window_manager.py](file:///Users/levanquang/tool/app/vision/window_manager.py)):** Trước đây slot UI truyền số thứ tự 1, 2, 3 làm `window_id`, khiến thuật toán `compute_occlusion` không tìm thấy và gán nhầm tỷ lệ che khuất 100%. Đã bổ sung trường `cg_window_id` vào `WindowROI` và kết nối trực tiếp với macOS CGWindowID. Loại trừ cửa sổ ứng dụng Binh 13 Analyzer khỏi danh sách các cửa sổ che khuất.
+  - **Xác nhận tức thì khi chọn cửa sổ trong dropdown:** Thêm callback `_on_window_selected` cho sự kiện `combo_w1/w2/w3.currentIndexChanged`. Ngay khi người dùng chọn cửa sổ, app chụp ảnh tức thì, nạp vào viewer để người dùng xác nhận đúng cửa sổ, tự động chạy card detection để hiển thị thumbnail lá bài phát hiện và tính toán gợi ý xếp bài tối ưu (Chi Đầu, Chi Giữa, Chi Cuối).
+  - **Không chặn quét khi cửa sổ bị che một phần ([multi_window_service.py](file:///Users/levanquang/tool/app/services/multi_window_service.py)):** Tiếp tục phát hiện và nhận diện bài nếu frame ảnh hợp lệ.
+  - **Cập nhật bộ lọc cửa sổ Swift ([macos_window_helper.swift](file:///Users/levanquang/tool/scripts/macos_window_helper.swift)):** Bỏ flag `optionOnScreenOnly` để nhận diện các cửa sổ game nằm phía dưới, đồng thời loại trừ chính cửa sổ Binh 13 Analyzer.
+  - **Bổ sung kiểm thử và cấu hình session fixture:** Thêm 2 bài test trong `tests/test_multi_window.py` và tạo `tests/conftest.py`, nâng tổng số test suite đạt **119/119 PASSED (100%)**.
+
+---
+
 ## [1.2.2] — 2026-10-27
 
 ### Fixed

@@ -124,6 +124,34 @@ class ScreenCapture:
                     pass
 
     @classmethod
+    def capture_window_by_id(cls, window_id: int) -> np.ndarray | None:
+        """Captures a specific window directly by its macOS CGWindowID without user interaction.
+        Captures the exact window content directly from the window server even if another window
+        is in front of it on screen.
+        """
+        if window_id <= 0:
+            return None
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            # -l <window_id>: window-specific capture
+            # -o: exclude window drop shadow
+            # -x: silent (mute shutter sound)
+            cmd = ["/usr/sbin/screencapture", f"-l{window_id}", "-o", "-x", tmp_path]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=3.0)
+            return cls._verify_capture_result(tmp_path, res.stderr)
+        except Exception:
+            return None
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+
+    @classmethod
     def capture_full_screen(cls, display_index: int = 1) -> np.ndarray | None:
         """Captures an entire display (Display 1, Display 2, etc.) without user interaction."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:

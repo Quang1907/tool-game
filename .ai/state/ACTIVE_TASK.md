@@ -1,35 +1,28 @@
 # ACTIVE TASK — BINH 13 ANALYZER
 
-**Nhiệm vụ hiện tại:** Thiết lập Hệ Thống AI Master Engineer (Tri thức, Trạng thái, Quy tắc và Kiến trúc Lâu dài).  
+**Nhiệm vụ hiện tại:** Sửa lỗi chụp cửa sổ, tự động xác nhận đúng cửa sổ được chọn, hiển thị lá bài phát hiện và gợi ý xếp bài tối ưu trong Tab 6 ("Bot 3 Cửa Sổ").  
 **Người yêu cầu:** User / Product Owner  
-**Trạng thái nhiệm vụ:** `COMPLETED / VERIFIED` (Hệ thống sẵn sàng vận hành)
+**Trạng thái nhiệm vụ:** `COMPLETED / VERIFIED` (119/119 tests PASSED)
 
 ---
 
 ## 1. MỤC TIÊU NHIỆM VỤ
 
-Xây dựng hệ thống quản lý tri thức và quy chuẩn vận hành toàn diện trong `.ai/` và các file chỉ dẫn gốc (`MASTER_CONTEXT.md`, `GEMINI.md`, `AGENTS.md`) để mọi phiên làm việc AI tương lai:
-1. Nắm bắt tức thì toàn bộ cấu trúc, kiến trúc và trạng thái đã kiểm chứng của dự án.
-2. Không cần đọc lại toàn bộ mã nguồn mà vẫn biết chính xác file cần sửa, file cần đọc và test cần chạy.
-3. Tuân thủ nghiêm ngặt quy trình làm việc (START SESSION $\rightarrow$ PLAN $\rightarrow$ IMPLEMENT $\rightarrow$ VERIFY $\rightarrow$ SYNC).
-4. Phân biệt rõ ràng giữa code đã viết (`IMPLEMENTED`) và code đã kiểm chứng thực tế (`VERIFIED`).
+1. **Lấy đúng hình ảnh cửa sổ:** Thay vì chụp toàn màn hình rồi crop (dễ bị chính cửa sổ app Binh 13 Analyzer đè lên tạo hiệu ứng lồng vô tận), sử dụng cơ chế chụp trực tiếp theo `CGWindowID` của macOS WindowServer.
+2. **Xác nhận tức thì khi chọn cửa sổ:** Khi người dùng chọn một cửa sổ từ dropdown `Cửa số 1`, `Cửa số 2`, `Cửa số 3`, lập tức chụp và cập nhật khung hình vào viewer để người dùng xác nhận đúng cửa sổ mong muốn.
+3. **Tự động nhận diện lá bài & Gợi ý xếp bài tối ưu:** Ngay khi cửa sổ được chọn hoặc khi chạy bot quét, tự động phát hiện các lá bài, hiển thị ảnh thumbnail và nếu phát hiện đủ 13 lá, giải bài tìm bộ 3 chi tối ưu (Chi Đầu, Chi Giữa, Chi Cuối) hiển thị trực quan lên giao diện.
+4. **Khắc phục cảnh báo Occlusion ảo:** Loại bỏ việc cửa sổ ứng dụng Binh 13 Analyzer tự tính mình là đối tượng che khuất cửa sổ game, và sửa lỗi ánh xạ `window_id` (slot index 1,2,3 vs macOS CGWindowID).
 
 ---
 
-## 2. TIẾN ĐỘ THỰC HIỆN CÁC PHASE
+## 2. TIẾN ĐỘ THỰC HIỆN
 
-- [x] **Phase 0:** Audit toàn bộ repository (ngôn ngữ, framework, entry point, 116 test, Git status).
-- [x] **Phase 1 (Phần 1):** Tạo `.ai/MASTER_RULES.md`, `.ai/PROJECT_VISION.md`, `.ai/PROJECT_INVENTORY.md`, `.ai/ARCHITECTURE.md`, `.ai/MODULE_MAP.md`, `.ai/DATA_FLOW.md`, `.ai/GAME_RULES.md`.
-- [x] **Phase 2 (Phần 1):** Tạo `.ai/state/CURRENT_STATE.md`, `.ai/state/ACTIVE_TASK.md`.
-- [x] **Phase 2 (Phần 2):** Tạo `.ai/state/NEXT_ACTIONS.md`, `.ai/state/KNOWN_ISSUES.md`, `.ai/state/TEST_STATUS.md`.
-- [x] **Phase 3:** Tạo `.ai/workflows/SESSION_WORKFLOW.md`, `.ai/workflows/CHANGE_APPROVAL_POLICY.md`.
-- [x] **Phase 4:** Tạo các tài liệu module chi tiết trong `.ai/modules/` (`CORE_DOMAIN.md`, `VISION_PIPELINE.md`, `UI_PRESENTATION.md`, `DATABASE_PERSISTENCE.md`, `SERVICES_ORCHESTRATION.md`).
-- [x] **Phase 5 & 6:** Tạo `.ai/plans/ROADMAP.md`, `.ai/plans/BACKLOG.md`, `.ai/DECISIONS.md`, `.ai/logs/CHANGELOG.md`, `MASTER_CONTEXT.md`, `GEMINI.md`, cập nhật `AGENTS.md`.
-- [x] **Phase 7:** Kiểm tra toàn bộ liên kết, đường dẫn và tính nhất quán (24 file trong `.ai/` + 3 file gốc).
-
----
-
-## 3. TRẠNG THÁI HIỆN TẠI & BƯỚC KẾ TIẾP
-
-Hệ thống AI Master Engineer đã được thiết lập hoàn tất.  
-Sẵn sàng cho các phiên làm việc tiếp theo của AI theo định hướng trong [MASTER_CONTEXT.md](file:///Users/levanquang/tool/MASTER_CONTEXT.md) và [.ai/state/NEXT_ACTIONS.md](file:///Users/levanquang/tool/.ai/state/NEXT_ACTIONS.md).
+- [x] Thêm `ScreenCapture.capture_window_by_id` trực tiếp từ macOS WindowServer qua `/usr/sbin/screencapture -l <window_id> -o -x`.
+- [x] Cập nhật `WindowROI` với trường `cg_window_id` để kết nối chính xác với WindowServer.
+- [x] Sửa thuật toán `compute_occlusion` trong `WindowManager`: loại trừ cửa sổ Binh 13 Analyzer / Python.
+- [x] Kết nối sự kiện `combo_w1/w2/w3.currentIndexChanged` với hàm `_on_window_selected` trong `MultiWindowWidget`.
+- [x] Tích hợp pipeline nhận diện `CardDetector`, `CardRecognizer` và bộ giải `BinhSolver` vào `MultiWindowWidget` và `MultiWindowWorker`.
+- [x] Thêm `tests/conftest.py` với fixture `qapp` cho PySide6 test.
+- [x] Viết test `TestDirectWindowCaptureAndSelection` trong `tests/test_multi_window.py`.
+- [x] Kiểm thử toàn bộ 119/119 tests PASSED (100%).
+- [x] Cập nhật tài liệu và đồng bộ trạng thái `.ai/`.

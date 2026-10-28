@@ -107,3 +107,46 @@ class TestROIManagerAndOcclusion:
         occluded = wm.compute_occlusion(target, [covering, target])
         assert occluded.is_occluded is True
         assert occluded.occlusion_ratio >= 0.90
+
+    def test_window_manager_ignores_analyzer_self_window(self):
+        """WindowManager does not let Binh 13 Analyzer occlude user game windows."""
+        wm = WindowManager()
+        target = WindowItem(window_id=101, owner_name="GameApp", title="Table 1", bounds=(0, 0, 800, 600))
+        analyzer = WindowItem(window_id=999, owner_name="Python", title="Binh 13 Analyzer — macOS Professional Edition", bounds=(0, 0, 800, 600))
+
+        occluded = wm.compute_occlusion(target, [analyzer, target])
+        assert occluded.is_occluded is False
+        assert occluded.occlusion_ratio == 0.0
+
+
+class TestDirectWindowCaptureAndSelection:
+    """Verifies that selecting a window immediately captures, displays, detects, and solves."""
+
+    def test_capture_window_by_id_invalid_id(self):
+        from app.vision.screen_capture import ScreenCapture
+        assert ScreenCapture.capture_window_by_id(0) is None
+        assert ScreenCapture.capture_window_by_id(-1) is None
+
+    def test_multi_window_selection_updates_preview_and_solution(self, qapp):
+        from unittest.mock import patch
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+        from app.vision.screen_capture import ScreenCapture
+        import cv2
+
+        widget = MultiWindowWidget()
+        win = WindowItem(window_id=77777, owner_name="TestGame", title="Binh Table", bounds=(0, 0, 600, 400))
+        widget.discovered_windows = [win]
+        widget.combo_w1.clear()
+        widget.combo_w1.addItem(win.display_label, win.window_id)
+
+        # Mock capture_window_by_id to return a synthetic image
+        synth_img = np.full((400, 600, 3), 40, dtype=np.uint8)
+
+        with patch.object(ScreenCapture, "capture_window_by_id", return_value=synth_img):
+            widget._on_window_selected(1)
+
+        panel = widget.panels[1]
+        assert "Đã kết nối" in panel.lbl_status.text()
+        assert panel.viewer._current_image is not None
+        widget.close()
+
