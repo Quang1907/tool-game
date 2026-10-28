@@ -190,7 +190,18 @@ class CardRecognizer:
             suit_crop = norm_img[52:95, 6:46] if norm_img is not None else np.zeros((43, 40, 3), dtype=np.uint8)
 
         # 1. Color discrimination: Red vs Black
-        is_red = self.reference_library.check_image_is_red(suit_crop) or self.reference_library.check_image_is_red(rank_crop)
+        is_red_s = self.reference_library.check_image_is_red(suit_crop)
+        is_red_r = self.reference_library.check_image_is_red(rank_crop)
+        if is_red_s == is_red_r:
+            is_red = is_red_s
+        elif not is_red_r and is_red_s:
+            # On court cards (J, Q, K), portrait graphics may have red pigment, but the corner rank letter is pure black.
+            # A standard playing card with a black rank letter can NEVER be a red suit.
+            is_red = False
+        elif is_red_r and not is_red_s:
+            is_red = True
+        else:
+            is_red = is_red_s
 
         # 2. Extract isolated binary primary glyphs
         q_rank_glyph = self.reference_library.extract_primary_glyph(rank_crop, (24, 36))

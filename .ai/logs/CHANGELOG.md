@@ -4,6 +4,51 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi chép t�
 
 ---
 
+## [1.3.2] — 2026-10-29
+
+### Fixed & Refactored
+
+- **Hợp nhất hoàn toàn hàm và quy trình nhận diện lá bài (Unified Recognition Pipeline) giữa Tab 2 ("2. Quét màn hình CV") và Tab 6 ("6. Bot 3 Cửa Sổ"):**
+  - **Bản chất nguyên nhân lệch kết quả giữa 2 tab:**
+    - Tab 2 (`VisionWidget`): Khởi tạo `CardReferenceLibrary` riêng, chạy qua `VisionWorker` với bộ lọc kiểm tra nghiêm ngặt (ngưỡng $rank\_conf \ge 0.65$ và $suit\_conf \ge 0.65$, loại trừ các crop giao diện không phải bài `NON_CARD_OBJECT`).
+    - Tab 6 (`MultiWindowWidget` / `MultiWindowWorker`): Khởi tạo một `CardRecognizer` độc lập (hoàn toàn không được chia sẻ các ảnh mẫu đã lưu/xác nhận ở Tab 2), đồng thời gọi `recognize_all(crops)` trực tiếp mà không có bộ lọc candidate validation. Các vật thể UI (nút bấm, avatar, chip phỉnh) trên bàn chơi bị nhận nhầm thành lá bài với độ tin cậy thấp, làm sai lệch danh sách 13 lá bài.
+  - **Xây dựng hàm chuẩn hóa `recognize_cards_pipeline` ([vision_service.py](file:///Users/levanquang/tool/app/services/vision_service.py)):**
+    - Đóng gói trọn vẹn toàn bộ chu trình xử lý: (1) Quét phát hiện đối tượng lá bài (`detect_card_objects`), (2) Nhận diện tách biệt Rank và Suit (`recognize_crop`), (3) Lọc chặt chẽ với $rank\_conf \ge 0.65$ và $suit\_conf \ge 0.65$, loại trừ `NON_CARD_OBJECT`, (4) Khử trùng lặp và xác lập trạng thái `CONFIRMED`.
+    - Tab 2 (`VisionWorker`) và Tab 6 (`MultiWindowWidget._on_window_selected` và `MultiWindowWorker.start_loop`) đều gọi chung 1 hàm duy nhất này.
+  - **Chia sẻ chung bộ nhớ và thư viện ảnh mẫu ([main_window.py](file:///Users/levanquang/tool/app/ui/main_window.py), [multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py)):**
+    - `MainWindow` truyền trực tiếp `detector`, `recognizer`, và `reference_library` từ Tab 2 sang Tab 6.
+    - Mọi ảnh mẫu được xác nhận hoặc bổ sung ở Tab 2 có hiệu lực ngay tức thì ở Tab 6.
+  - **Nút "📚 Thư viện ảnh mẫu" trên thanh công cụ Tab 6 ([multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py)):**
+    - Thêm nút `btn_ref_manager` gọi `CardReferenceManagerDialog` để người dùng quản lý, xem 52 lá bài và xóa/thêm ảnh mẫu trực tiếp tại Tab 6.
+  - **Kiểm thử tự động:**
+    - Bổ sung test `test_shared_vision_pipeline_and_reference_library` trong `tests/test_multi_window.py`.
+    - Toàn bộ test suite chạy thành công: **128/128 tests PASSED (100%)**.
+
+---
+
+## [1.3.1] — 2026-10-28
+
+### Fixed
+
+- **Khắc phục lỗi nhận diện các quân bài có hình ảnh (J, Q, K / Tây) bị nhận nhầm chất (vd: Q♠ nhầm thành Q♦, QC nhầm thành QD, KC nhầm thành KH) mặc dù đã có ảnh mẫu:**
+  - **Cô lập chuẩn xác Suit Pip góc ([card_reference_library.py](file:///Users/levanquang/tool/app/vision/card_reference_library.py)):** Trên các quân bài Tây, hình ảnh chân dung và trang phục hoàng gia ở trung tâm lá bài có kích thước lớn và nhiều màu đỏ, vàng bắt đầu từ $x \ge 25, y \ge 40$. Thuật toán `extract_dynamic_corner_patches` trước đây sắp xếp diện tích giảm dần nên đã chọn nhầm trang phục chân dung (diện tích $>700$) thay vì suit pip góc (diện tích $100-350$), khiến quân bài đen như Q♠, QC, KC bị kiểm tra ra màu đỏ (`check_image_is_red = True`) và ép nhận diện thành chất đỏ. Đã bổ sung bộ lọc tọa độ ($x < 38, y \in [45, 98]$), ràng buộc trục dọc thẳng hàng với Rank glyph ($|center\_x_{suit} - center\_x_{rank}| \le 8$) và phạt nặng các khối đồ họa chân dung quá khổ ($w > 30, h > 35, area > 550$).
+  - **Bảo toàn màu sắc không để chân dung gây nhiễm đỏ ([card_recognizer.py](file:///Users/levanquang/tool/app/vision/card_recognizer.py), [card_reference_library.py](file:///Users/levanquang/tool/app/vision/card_reference_library.py)):** Nếu Rank glyph là màu đen thuần túy (`check_image_is_red(rank_crop) == False`), quân bài tuyệt đối không bị coi là chất đỏ.
+  - **Tách biệt topo loop phân biệt 8 và Q ([template_engine.py](file:///Users/levanquang/tool/app/vision/template_engine.py)):** Cải tiến thuật toán phát hiện lỗ khép kín, phân biệt rõ ràng số 8 (2 lỗ cân bằng nhau) với chữ Q (1 lỗ lớn duy nhất ở thân).
+  - **Đạt độ chính xác 100.0% trên 96/96 ảnh mẫu thật:** Kiểm tra đối chiếu toàn bộ 96 ảnh mẫu thực tế trong thư viện của người dùng, 100% các quân bài J, Q, K và số đều nhận diện chính xác tuyệt đối.
+
+- **Triệt tiêu lỗi giao diện quân bài 2 Bích (2♠) hiển thị đè trên tất cả các ô ([card_reference_manager.py](file:///Users/levanquang/tool/app/ui/components/card_reference_manager.py), [vision_widget.py](file:///Users/levanquang/tool/app/ui/components/vision_widget.py), [multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py)):**
+  - Trong Qt/PySide6, khi làm mới layout danh sách, việc chỉ gọi `takeAt(0)` và `deleteLater()` không tự động ngắt kết nối widget con khỏi widget cha ngay lập tức. Do đó các widget cũ (như ảnh 2♠) vẫn tiếp tục hiển thị đè ở vị trí cũ bên trong container khi chuyển sang lá bài khác (như J♦).
+  - Đã bổ sung `w.setParent(None)` và `w.hide()` trước `w.deleteLater()` tại tất cả các vòng lặp dọn dẹp layout, giải phóng hoàn toàn và triệt tiêu 100% hiện tượng ghost widget.
+
+- **Hiển thị rõ ràng ký tự Rank trong lưới 52 lá của CardEditDialog ([card_edit_dialog.py](file:///Users/levanquang/tool/app/ui/components/card_edit_dialog.py)):**
+  - Thêm `padding: 0;` vào stylesheet của 52 nút lá bài trong `CardEditDialog` để không bị đè bởi padding mặc định `padding: 7px 16px;` của macOS QPushButton làm co hẹp ký tự rank bên trong.
+
+### Added
+
+- **Suite kiểm thử hồi quy mới `TestFaceCardsRecognitionAndGhostWidgetFix` ([test_card_detection_and_reference.py](file:///Users/levanquang/tool/tests/test_card_detection_and_reference.py)):** 3 bài test kiểm tra cô lập suit pip trên bài Tây, bảo toàn tính chất bài đen, và kiểm tra unparent widget khi dọn dẹp dialog. Tổng số test toàn dự án đạt **127/127 PASSED (100%)**.
+
+---
+
 ## [1.3.0] — 2026-10-28
 
 ### Added

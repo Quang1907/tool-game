@@ -217,21 +217,29 @@ class CardTemplateEngine:
 
         # Topological feature extraction: detect closed loops (holes) and their vertical positions
         contours, hierarchy = cv2.findContours(patch_bin.copy(), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-        has_bottom_hole = False
-        has_top_hole = False
+        holes = []
         if hierarchy is not None and len(hierarchy[0]) > 1:
             for i, h_info in enumerate(hierarchy[0]):
                 if h_info[3] != -1:  # Child contour = hole
                     hole_area = cv2.contourArea(contours[i])
-                    if hole_area >= 8:
+                    if hole_area >= 6:
                         M = cv2.moments(contours[i])
                         if M["m00"] > 0:
                             cy = M["m01"] / M["m00"]
                             rel_y = cy / float(patch_h)
-                            if rel_y >= 0.40:
-                                has_bottom_hole = True
-                            if rel_y <= 0.60:
-                                has_top_hole = True
+                            holes.append((hole_area, rel_y))
+
+        top_holes = [h for h in holes if h[1] <= 0.46]
+        bot_holes = [h for h in holes if h[1] >= 0.54]
+        has_two_balanced_holes = False
+        if top_holes and bot_holes:
+            max_top = max(h[0] for h in top_holes)
+            max_bot = max(h[0] for h in bot_holes)
+            if min(max_top, max_bot) / max(max_top, max_bot) >= 0.35:
+                has_two_balanced_holes = True
+
+        has_bottom_hole = len(bot_holes) > 0 and not has_two_balanced_holes and (not top_holes or max(h[0] for h in bot_holes) > max(h[0] for h in top_holes) * 3)
+        has_top_hole = len(top_holes) > 0 and not has_two_balanced_holes and (not bot_holes or max(h[0] for h in top_holes) > max(h[0] for h in bot_holes) * 3)
 
         for r_char, tmpls in self._rank_templates.items():
             char_best = -1.0
@@ -269,21 +277,26 @@ class CardTemplateEngine:
                 if r_char == "10":
                     char_best *= 0.15
 
-            # Apply topological consistency to prevent 6 vs 5 or 9 vs 6 misclassifications
+            # Apply topological consistency to prevent 6 vs 5, 9 vs 6, or 8 vs Q misclassifications
             if not is_multi_digit_10:
-                if has_bottom_hole and not has_top_hole:
+                if has_two_balanced_holes:
+                    if r_char == "8":
+                        char_best = min(0.99, char_best * 1.35)
+                    elif r_char in ("2", "3", "4", "5", "6", "7", "9", "J", "K", "Q"):
+                        char_best *= 0.15
+                elif has_bottom_hole and not has_top_hole:
                     # Distinct closed loop at bottom -> only 6 matches this topology
-                    if r_char in ("2", "3", "4", "5", "7", "J", "K"):
+                    if r_char in ("2", "3", "4", "5", "7", "J", "K", "8"):
                         char_best *= 0.15
                     elif r_char == "6":
                         char_best = min(0.99, char_best * 1.35)
                 elif has_top_hole and not has_bottom_hole:
                     # Distinct closed loop at top -> only 9 matches this topology
-                    if r_char in ("2", "3", "4", "5", "6", "7", "J", "K"):
+                    if r_char in ("2", "3", "4", "5", "6", "7", "J", "K", "8"):
                         char_best *= 0.15
                     elif r_char == "9":
                         char_best = min(0.99, char_best * 1.35)
-                elif not has_bottom_hole and not has_top_hole:
+                elif not holes:
                     # Digits with no holes (2, 3, 5, 7, etc.) cannot be digits with closed loops
                     if r_char in ("6", "8", "9", "Q"):
                         char_best *= 0.20

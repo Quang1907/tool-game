@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from app.core.card import Card
 from app.core.solver import HandArrangement, Solver
+from app.services.vision_service import recognize_cards_pipeline
 from app.vision.card_detector import CardDetector
 from app.vision.card_recognizer import CardRecognizer, DetectedCard
 from app.vision.card_state import CardStateManager, WindowCardState
@@ -102,11 +103,12 @@ class MultiWindowWorker(QObject):
                         self.frame_processed.emit(roi.window_id, state, None)
                         continue
 
-                    # Card Detection (discovering real card objects, no fixed grid)
-                    crops = self.detector.detect_cards(crop_img)
-
-                    # Card Recognition
-                    detected_cards = self.recognizer.recognize_all(crops)
+                    # Run Unified Card Recognition Pipeline (identical to Tab 2 Quét màn hình CV)
+                    detected_cards, _ = recognize_cards_pipeline(
+                        crop_img,
+                        detector=self.detector,
+                        recognizer=self.recognizer,
+                    )
 
                     # Update position-invariant state
                     state, should_solve = self.state_manager.update_window_cards(

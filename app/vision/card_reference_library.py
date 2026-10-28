@@ -266,7 +266,7 @@ class CardReferenceLibrary:
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(thresh)
 
         rank_comps = []
-        suit_comps = []
+        suit_candidates = []
         for i in range(1, num_labels):
             x, y, cw, ch, area = stats[i]
             # Ignore thin border artifacts touching edge
@@ -276,8 +276,8 @@ class CardReferenceLibrary:
                 center_y = y + ch / 2.0
                 if center_y < 52:
                     rank_comps.append((x, y, cw, ch, area))
-                elif center_y >= 48 and y < 98:
-                    suit_comps.append((x, y, cw, ch, area))
+                elif center_y >= 45 and y < 98 and x < 38:
+                    suit_candidates.append((x, y, cw, ch, area))
 
         # Rank patch: combine all valid components in upper region (e.g. '1' and '0' for 10)
         if rank_comps:
@@ -286,13 +286,32 @@ class CardReferenceLibrary:
             ry1 = max(0, min(c[1] for c in rank_comps) - 2)
             ry2 = min(105, max(c[1] + c[3] for c in rank_comps) + 2)
             rank_patch = corner[ry1:ry2, rx1:rx2]
+            rank_cx = (rx1 + rx2) / 2.0
+            rank_bottom = ry2
         else:
             rank_patch = norm[8:55, 4:48]
+            rank_cx = 18.0
+            rank_bottom = 50.0
 
-        # Suit patch: take largest component in lower region
-        if suit_comps:
-            suit_comps.sort(key=lambda c: c[4], reverse=True)
-            main_suit = suit_comps[0]
+        # Suit patch: isolate the corner suit pip located directly beneath the rank glyph
+        # On court cards (J, Q, K), portrait clothing starts right at x >= 25, y >= 45.
+        # The true corner suit pip is strictly aligned beneath the rank glyph horizontally.
+        if suit_candidates:
+            def suit_score(c: Tuple[int, int, int, int, int]) -> float:
+                sx, sy, scw, sch, sarea = c
+                scx = sx + scw / 2.0
+                horiz_dist = abs(scx - rank_cx)
+                vert_dist = max(0.0, float(sy - rank_bottom))
+                penalty = horiz_dist * 2.5 + vert_dist * 1.0
+                # Penalize portrait fragments with excessive dimensions or area
+                if scw > 30 or sch > 35:
+                    penalty += 100.0
+                if sarea > 550:
+                    penalty += 100.0
+                return penalty
+
+            suit_candidates.sort(key=suit_score)
+            main_suit = suit_candidates[0]
             sx1 = max(0, main_suit[0] - 2)
             sx2 = min(50, main_suit[0] + main_suit[2] + 2)
             sy1 = max(0, main_suit[1] - 2)
@@ -646,7 +665,18 @@ class CardReferenceLibrary:
         q_corner_gray = cv2.cvtColor(q_corner_norm, cv2.COLOR_BGR2GRAY)
         q_full_gray = cv2.cvtColor(q_full_norm, cv2.COLOR_BGR2GRAY)
 
-        query_is_red = self.check_image_is_red(suit_crop) or self.check_image_is_red(qc)
+        is_red_s = self.check_image_is_red(suit_crop)
+        is_red_r = self.check_image_is_red(rank_crop)
+        if is_red_s == is_red_r:
+            query_is_red = is_red_s
+        elif not is_red_r and is_red_s:
+            # On court cards (J, Q, K), portrait graphics may have red pigment, but the corner rank letter is pure black.
+            # A standard card with a black rank letter can NEVER be a red suit (Hearts or Diamonds).
+            query_is_red = False
+        elif is_red_r and not is_red_s:
+            query_is_red = True
+        else:
+            query_is_red = is_red_s
 
         has_rank_glyph = cv2.countNonZero(q_rank_glyph) >= 10
         has_suit_glyph = cv2.countNonZero(q_suit_glyph) >= 10

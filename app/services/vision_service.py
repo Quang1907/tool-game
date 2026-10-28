@@ -1,13 +1,111 @@
-"""Asynchronous worker for executing Computer Vision recognition without blocking UI thread."""
+"""Asynchronous worker and unified Computer Vision recognition pipeline."""
 
 from __future__ import annotations
-from typing import List, Optional
+import time
+from typing import Callable, Dict, List, Optional, Tuple
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
-import time
 from app.vision.card_detector import CardCrop, CardDetector, DetectionDebugInfo
 from app.vision.card_recognizer import CardRecognizer, DetectedCard
+
+
+def recognize_cards_pipeline(
+    image: np.ndarray,
+    detector: Optional[CardDetector] = None,
+    recognizer: Optional[CardRecognizer] = None,
+    min_confidence: float = 0.65,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+) -> Tuple[List[DetectedCard], DetectionDebugInfo]:
+    """Unified Computer Vision Card Recognition Pipeline used identically across
+    Tab 2 (Quét màn hình CV) and Tab 6 (Bot 3 Cửa Sổ).
+
+    Executes:
+    1. Real Computer Vision Card Detection: discovers candidate bounding boxes (detect_card_objects).
+    2. Decoupled Rank & Suit Recognition: evaluates card crops using confirmed reference samples
+       and normalized template cross-correlation (recognize_crop).
+    3. Strict Candidate Validation:
+       - Requires non-null detected card.
+       - Rejects non-card UI objects and avatars (crop_status in ('NON_CARD_OBJECT', 'INVALID_CARD_CROP')).
+       - Requires both rank_confidence >= min_confidence (0.65) and suit_confidence >= min_confidence (0.65).
+       - Confirms state and sets recognition_status = 'CONFIRMED'.
+    4. Deduplication: keeps the highest confidence detection for each unique card.
+    """
+    if detector is None:
+        detector = CardDetector()
+    if recognizer is None:
+        recognizer = CardRecognizer()
+
+    if image is None or image.size == 0:
+        return [], DetectionDebugInfo()
+
+    if progress_callback:
+        progress_callback(10, 100, "Đang quét và định vị hình ảnh các lá bài...")
+
+    crops, debug_info = detector.detect_card_objects(image)
+    if not crops:
+        if progress_callback:
+            progress_callback(100, 100, "Không tìm thấy lá bài nào trong vùng tìm kiếm.")
+        return [], debug_info
+
+    total_crops = len(crops)
+    if progress_callback:
+        progress_callback(30, 100, f"Đã tìm thấy {total_crops} lá bài thực tế. Đang nhận diện rank và suit...")
+
+    start_recog = time.perf_counter()
+    raw_detected: List[DetectedCard] = []
+
+    for idx, crop in enumerate(crops):
+        det = recognizer.recognize_crop(crop)
+        raw_detected.append(det)
+
+        if progress_callback:
+            pct = 30 + int(((idx + 1) / total_crops) * 60)
+            tag = det.card.unicode_name if det.card else "?"
+            progress_callback(pct, 100, f"Đang nhận diện lá {idx + 1}/{total_crops}: {tag}...")
+
+    debug_info.recognition_time_ms = (time.perf_counter() - start_recog) * 1000.0
+
+    # Strict Validation and Filtering identical across both Tab 2 and Tab 6
+    strict_detected: List[DetectedCard] = []
+    seen_codes: Dict[str, DetectedCard] = {}
+
+    for det in raw_detected:
+        if det.card is None:
+            continue
+
+        crop_st = getattr(det, "crop_status", "")
+        if crop_st in ("NON_CARD_OBJECT", "INVALID_CARD_CROP"):
+            continue
+
+        rank_conf = getattr(det, "rank_confidence", 0.0)
+        suit_conf = getattr(det, "suit_confidence", 0.0)
+
+        # Both Rank and Suit confidence must meet the minimum threshold
+        if rank_conf < min_confidence or suit_conf < min_confidence:
+            continue
+
+        det.is_uncertain = False
+        det.recognition_status = "CONFIRMED"
+
+        # Deduplication: If the same card code is detected multiple times, keep the one with higher overall confidence
+        code = det.card_code
+        if code in seen_codes:
+            if det.confidence > seen_codes[code].confidence:
+                idx_old = strict_detected.index(seen_codes[code])
+                strict_detected[idx_old] = det
+                seen_codes[code] = det
+        else:
+            seen_codes[code] = det
+            strict_detected.append(det)
+
+    debug_info.confirmed_count = len(strict_detected)
+    debug_info.uncertain_count = len([d for d in raw_detected if d not in strict_detected])
+
+    if progress_callback:
+        progress_callback(100, 100, f"Hoàn thành: {len(strict_detected)} lá bài đạt chuẩn.")
+
+    return strict_detected, debug_info
 
 
 class VisionWorker(QObject):
@@ -31,42 +129,14 @@ class VisionWorker(QObject):
         self.mode = mode
 
     def run(self) -> None:
-        """Executes detection and recognition."""
+        """Executes unified detection and recognition pipeline."""
         try:
-            self.progress.emit(10, 100, "Đang quét và định vị hình ảnh các lá bài...")
-
-            # 1. Real Computer Vision Card Detection
-            crops, debug_info = self.detector.detect_card_objects(self.image)
-
-            if not crops:
-                self.progress.emit(100, 100, "Không tìm thấy lá bài nào trong vùng tìm kiếm.")
-                self.finished.emit([], debug_info)
-                return
-
-            total_crops = len(crops)
-            self.progress.emit(30, 100, f"Đã tìm thấy {total_crops} lá bài thực tế. Đang nhận diện rank và suit...")
-
-            # 2. Card Recognition
-            start_recog = time.perf_counter()
-            detected_cards: List[DetectedCard] = []
-            for idx, crop in enumerate(crops):
-                det = self.recognizer.recognize_crop(crop)
-                detected_cards.append(det)
-
-                if det.is_uncertain:
-                    debug_info.uncertain_count += 1
-                else:
-                    debug_info.confirmed_count += 1
-
-                pct = 30 + int(((idx + 1) / total_crops) * 70)
-                tag = det.card.unicode_name if det.card else "?"
-                self.progress.emit(pct, 100, f"Đang nhận diện lá {idx + 1}/{total_crops}: {tag}...")
-
-            debug_info.recognition_time_ms = (time.perf_counter() - start_recog) * 1000.0
-
-            self.progress.emit(100, 100, f"Hoàn thành: {len(detected_cards)} lá ({debug_info.confirmed_count} xác nhận, {debug_info.uncertain_count} nghi ngờ)")
+            detected_cards, debug_info = recognize_cards_pipeline(
+                image=self.image,
+                detector=self.detector,
+                recognizer=self.recognizer,
+                progress_callback=self.progress.emit,
+            )
             self.finished.emit(detected_cards, debug_info)
-
         except Exception as e:
             self.error.emit(str(e))
-

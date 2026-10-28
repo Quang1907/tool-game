@@ -1116,4 +1116,95 @@ class TestBlackCardsColorIntegrityAndRank10Segmentation:
         assert pred_4.confidence >= 0.85
 
 
+class TestFaceCardsRecognitionAndGhostWidgetFix:
+    """Verifies that:
+    1. Face cards (J, Q, K) isolate the corner suit pip beneath the rank without picking portrait clothing.
+    2. Black court cards (QS, KS, JS, QC, KC, JC) are never evaluated as red suits.
+    3. Layout clearing in CardReferenceManagerDialog and VisionWidget unparents widgets to prevent ghosting (e.g. 2S).
+    """
+
+    def test_face_card_suit_isolation_not_contaminated_by_portrait(self):
+        """Synthetic court card with a large colorful red/gold portrait in center must isolate the black suit pip."""
+        # Create a 120x168 card
+        card_img = np.full((168, 120, 3), 255, dtype=np.uint8)
+
+        # Draw a black 'Q' in top-left
+        cv2.putText(card_img, "Q", (10, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (20, 20, 20), 2)
+        # Draw a small black Spade pip directly below 'Q'
+        cv2.circle(card_img, (18, 62), 7, (20, 20, 20), -1)
+
+        # Draw a large ornate court portrait (red and gold garment) starting at x=28, y=50
+        cv2.rectangle(card_img, (28, 50), (105, 140), (20, 30, 210), -1)  # Red fabric
+        cv2.circle(card_img, (60, 80), 16, (30, 215, 255), -1)            # Gold crown/necklace
+
+        r_crop, s_crop = CardReferenceLibrary.extract_dynamic_corner_patches(card_img)
+
+        # Rank patch must be black
+        assert not CardReferenceLibrary.check_image_is_red(r_crop)
+
+        # Suit patch must isolate the pip, NOT the red portrait
+        assert s_crop.shape[1] <= 36, f"Suit crop width {s_crop.shape[1]} exceeded corner margin"
+        assert not CardReferenceLibrary.check_image_is_red(s_crop), "Suit crop mistakenly grabbed the red portrait garment!"
+
+    def test_black_court_card_never_evaluated_as_red_even_with_portrait(self, isolated_lib):
+        """Black court card reference (e.g. QS) must match QS and NEVER match QD or QH."""
+        card_qs = Card(Rank.QUEEN, Suit.SPADES)
+        img_qs = np.full((168, 120, 3), 255, dtype=np.uint8)
+        cv2.putText(img_qs, "Q", (10, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (20, 20, 20), 2)
+        cv2.circle(img_qs, (18, 62), 7, (20, 20, 20), -1)
+        # Ornate red dress in portrait
+        cv2.rectangle(img_qs, (30, 52), (100, 130), (20, 20, 200), -1)
+
+        isolated_lib.add_reference(image=img_qs, card=card_qs)
+        rec = CardRecognizer(reference_library=isolated_lib)
+
+        crop = CardCrop(bbox=(0, 0, 120, 168), image=img_qs, corner_crop=img_qs[0:60, 0:50])
+        det = rec.recognize_crop(crop)
+
+        assert det.card is not None
+        assert det.card.rank == Rank.QUEEN
+        assert det.card.suit in (Suit.SPADES, Suit.CLUBS), f"Black court card was incorrectly matched as {det.card.suit}"
+        assert det.card.suit != Suit.DIAMONDS
+        assert det.card.suit != Suit.HEARTS
+
+    def test_card_reference_manager_dialog_clearing_unparents_widgets(self, isolated_lib):
+        """Switching between cards in CardReferenceManagerDialog must unparent old widgets so 2S doesn't linger."""
+        from PySide6.QtWidgets import QApplication
+        from app.ui.components.card_reference_manager import CardReferenceManagerDialog
+
+        app = QApplication.instance() or QApplication([])
+
+        # Add sample for 2S
+        card_2s = Card(Rank.TWO, Suit.SPADES)
+        img_2s = _generate_synthetic_card("2", is_red=False)
+        isolated_lib.add_reference(image=img_2s, card=card_2s)
+
+        # Add sample for JD
+        card_jd = Card(Rank.JACK, Suit.DIAMONDS)
+        img_jd = _generate_synthetic_card("J", is_red=True)
+        isolated_lib.add_reference(image=img_jd, card=card_jd)
+
+        dlg = CardReferenceManagerDialog(reference_library=isolated_lib)
+
+        # Select 2S first
+        dlg.selected_card = card_2s
+        dlg._load_selected_card_samples()
+
+        # Check that 2S sample widget was created
+        old_widgets = [dlg.layout_samples.itemAt(i).widget() for i in range(dlg.layout_samples.count()) if dlg.layout_samples.itemAt(i).widget()]
+        assert len(old_widgets) >= 1
+
+        # Now select JD
+        dlg.selected_card = card_jd
+        dlg._load_selected_card_samples()
+
+        # All previous widgets for 2S MUST be unparented (parent is None) and hidden
+        for old_w in old_widgets:
+            assert old_w.parent() is None, "Old sample widget was not unparented and will ghost on screen!"
+            assert old_w.isHidden(), "Old sample widget was not hidden!"
+
+        dlg.close()
+
+
+
 

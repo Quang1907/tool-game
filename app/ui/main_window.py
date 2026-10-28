@@ -93,7 +93,11 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.tab_history, "5. Lịch sử phân tích")
 
         # 6. Multi-Window Game Bot Tab
-        self.tab_multi_bot = MultiWindowWidget()
+        self.tab_multi_bot = MultiWindowWidget(
+            detector=self.tab_vision.detector,
+            recognizer=self.tab_vision.recognizer,
+            reference_library=self.tab_vision.reference_library,
+        )
         self.tabs.addTab(self.tab_multi_bot, "6. Bot 3 Cửa Sổ")
 
         main_layout.addWidget(self.tabs)

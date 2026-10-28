@@ -291,11 +291,14 @@ class CardReferenceManagerDialog(QDialog):
 
     def _load_selected_card_samples(self) -> None:
         """Renders thumbnails and metadata for the currently selected card."""
-        # Clear previous samples from layout
+        # Clear previous samples from layout cleanly
         while self.layout_samples.count():
             child = self.layout_samples.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+            w = child.widget()
+            if w is not None:
+                w.setParent(None)
+                w.hide()
+                w.deleteLater()
 
         if not self.selected_card:
             self.lbl_selected_title.setText("Chưa chọn lá bài nào")

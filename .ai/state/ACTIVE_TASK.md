@@ -1,30 +1,28 @@
 # ACTIVE TASK — BINH 13 ANALYZER
 
-**Nhiệm vụ hiện tại:** Suy luận chính xác 13 lá bài của nhà đối thủ (#4) từ 3 cửa sổ game (39 lá bài) và tính toán thế bài phản công tối ưu cho 3 bộ bài để đánh thắng đối thủ.  
+**Nhiệm vụ hiện tại:** Hợp nhất quy trình và hàm nhận diện lá bài (Unified Card Recognition Pipeline) giữa Tab 2 (Quét màn hình CV) và Tab 6 (Bot 3 Cửa Sổ) để đồng bộ 100% kết quả nhận diện và thư viện ảnh mẫu.  
 **Người yêu cầu:** User / Product Owner  
-**Trạng thái nhiệm vụ:** `COMPLETED / VERIFIED` (124/124 tests PASSED)
+**Trạng thái nhiệm vụ:** `COMPLETED`
 
 ---
 
 ## 1. MỤC TIÊU NHIỆM VỤ
 
-1. **Khóa chặt 13 lá bài của nhà đối thủ (Nhà thứ 4):**
-   Trong ván Mậu Binh 4 người (bộ bài chuẩn 52 lá không tính Joker), khi nhận diện đủ 39 lá bài từ 3 cửa sổ ($3 \times 13 = 39$), thực hiện phép trừ tập hợp $52 - 39 = 13$ để suy luận chính xác 100% 13 lá bài mà nhà đối thủ còn lại đang nắm giữ.
-2. **Giải thế bài tối ưu nhất của đối thủ:**
-   Sử dụng `Solver` để giải thế bài 3 chi (Đầu, Giữa, Cuối) tối ưu nhất mà đối thủ có thể xếp.
-3. **Chiến lược phản công cho 3 cửa sổ đánh thắng đối thủ:**
-   Thay vì chỉ xếp bài độc lập, hệ thống so sánh đối đầu trực tiếp (`compare_head_to_head`) tất cả các thế bài hợp lệ của từng cửa sổ với thế bài của đối thủ, tự động chọn thế bài giúp **Bắt sập 3 chi (+6 điểm)** hoặc tối đa hóa điểm thắng chi trước đối thủ.
-4. **Hiển thị trực quan trên giao diện:**
-   Bổ sung bảng điều khiển đối thủ `OpponentDeductionPanel` hiển thị 13 lá bài đối thủ, cách xếp bài đối thủ, và huy hiệu kết quả đối đầu trên từng cửa sổ người chơi.
+1. **Thực trạng và nguyên nhân lệch kết quả giữa Tab 2 và Tab 6:**
+   - Tab 2 (`VisionWidget`): Khởi tạo `CardReferenceLibrary` riêng, chạy qua `VisionWorker` và áp dụng bộ lọc nghiêm ngặt loại bỏ các đối tượng không phải bài (avatar, nút bấm UI, chip cược) với ngưỡng tin cậy $rank\_conf \ge 0.65$ và $suit\_conf \ge 0.65$.
+   - Tab 6 (`MultiWindowWidget` / `MultiWindowWorker`): Khởi tạo `CardRecognizer` độc lập (không chia sẻ thư viện ảnh mẫu đã lưu của Tab 2), gọi trực tiếp `recognize_all(crops)` mà không chạy qua bộ lọc chuẩn hóa nghiêm ngặt. Dẫn đến các nút bấm, vật thể trên bàn chơi bị nhận nhầm thành lá bài giả, gây sai lệch kết quả hoặc không nhận diện đúng.
 
----
+2. **Giải pháp kiến trúc hợp nhất (Unified Pipeline):**
+   - Xây dựng hàm chuẩn hóa `recognize_cards_pipeline(image, detector, recognizer, min_confidence=0.65)` trong `app/services/vision_service.py` đóng gói toàn bộ quy trình:
+     1. Quét đối tượng thẻ bài (`detect_card_objects`).
+     2. Nhận diện Rank & Suit tách biệt (`recognize_crop`).
+     3. Lọc nghiêm ngặt: yêu cầu có đủ rank/suit crop, $rank\_conf \ge 0.65$, $suit\_conf \ge 0.65$, loại trừ vật thể `NON_CARD_OBJECT`.
+     4. Khử trùng lặp và xác nhận trạng thái `CONFIRMED`.
+   - Cả Tab 2 (`VisionWorker`) và Tab 6 (`MultiWindowWidget._on_window_selected`, `MultiWindowWorker.start_loop`) đều sử dụng chung 1 hàm duy nhất này.
+   - Chia sẻ chung instance `CardReferenceLibrary` và `CardRecognizer` từ `MainWindow` truyền xuống `MultiWindowWidget`, đảm bảo bất kỳ ảnh mẫu nào được lưu ở Tab 2 thì Tab 6 nhận được ngay lập tức.
+   - Bổ sung nút "📚 Thư viện ảnh mẫu" trên thanh công cụ của Tab 6 để người dùng có thể mở quản lý ảnh mẫu trực tiếp từ Tab 6.
 
-## 2. TIẾN ĐỘ THỰC HIỆN
-
-- [x] Tạo `CollaborativeTableAnalyzer` trong `app/core/collaborative_analyzer.py` với logic loại trừ bài 52 cây và tối ưu hóa phản công.
-- [x] Tích hợp `OpponentDeductionPanel` và huy hiệu đối đầu `box_vs_opp` vào `MultiWindowWidget`.
-- [x] Bổ sung caching card-hash để tránh tính toán lại không cần thiết (đảm bảo Zero UI Lag).
-- [x] Viết unit test suite `tests/test_collaborative_analyzer.py` (4 tests).
-- [x] Viết test UI integration trong `tests/test_multi_window.py`.
-- [x] Chạy toàn bộ test suite dự án: 124/124 PASSED (100%).
-- [x] Đồng bộ trạng thái và tài liệu `.ai/`.
+3. **Kết quả xác minh nghiệm thu:**
+   - 100% các luồng quét hình ảnh của Tab 2 và Tab 6 đều gọi qua `recognize_cards_pipeline`.
+   - Tab 2 và Tab 6 dùng chung 1 instance `CardReferenceLibrary` và `CardRecognizer`.
+   - Đã chạy kiểm thử thực tế toàn bộ hệ thống bằng lệnh `.venv/bin/pytest tests/`: **128 / 128 tests PASSED (100%)**.

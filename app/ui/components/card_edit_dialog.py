@@ -701,12 +701,12 @@ class CardEditDialog(QDialog):
             fg = "#FF453A" if is_red else "#FFFFFF"
             if code == selected_code:
                 btn.setStyleSheet(
-                    f"font-weight: 800; font-size: 12px; color: {fg}; background-color: #0A84FF; "
+                    f"padding: 0; font-weight: 800; font-size: 12px; color: #FFFFFF; background-color: #0A84FF; "
                     f"border: 2px solid #FFFFFF; border-radius: 4px;"
                 )
             else:
                 btn.setStyleSheet(
-                    f"font-weight: 700; font-size: 11px; color: {fg}; background-color: #2C2C2E; "
+                    f"padding: 0; font-weight: 700; font-size: 11px; color: {fg}; background-color: #2C2C2E; "
                     f"border: 1px solid #3A3A3C; border-radius: 4px;"
                 )
 

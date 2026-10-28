@@ -28,10 +28,13 @@ from app.core.collaborative_analyzer import (
 )
 from app.core.solver import HandArrangement, Solver
 from app.services.multi_window_service import MultiWindowWorker
+from app.services.vision_service import recognize_cards_pipeline
+from app.ui.components.card_reference_manager import CardReferenceManagerDialog
 from app.ui.components.card_widget import CardWidget
 from app.ui.components.zoomable_viewer import ZoomableImageViewer
 from app.vision.card_detector import CardDetector
 from app.vision.card_recognizer import CardRecognizer
+from app.vision.card_reference_library import CardReferenceLibrary
 from app.vision.card_state import WindowCardState
 from app.vision.roi_manager import WindowROI
 from app.vision.screen_capture import ScreenCapture
@@ -138,8 +141,11 @@ class SingleWindowPanel(QGroupBox):
         # Update card thumbnails
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.hide()
+                w.deleteLater()
 
         for det in state.detected_cards:
             w = CardWidget(card=det.card, width=36, height=52, selectable=False)
@@ -267,8 +273,11 @@ class OpponentDeductionPanel(QGroupBox):
         # Update opponent cards
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.hide()
+                w.deleteLater()
 
         for card in result.remaining_cards:
             w = CardWidget(card=card, width=32, height=48, selectable=False)
@@ -294,11 +303,18 @@ class OpponentDeductionPanel(QGroupBox):
 class MultiWindowWidget(QWidget):
     """Widget orchestrating simultaneous 3-window game detection on macOS."""
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        detector: Optional[CardDetector] = None,
+        recognizer: Optional[CardRecognizer] = None,
+        reference_library: Optional[CardReferenceLibrary] = None,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
         self.window_manager = WindowManager()
-        self.detector = CardDetector()
-        self.recognizer = CardRecognizer()
+        self.reference_library = reference_library or (recognizer.reference_library if recognizer else CardReferenceLibrary())
+        self.detector = detector or CardDetector()
+        self.recognizer = recognizer or CardRecognizer(reference_library=self.reference_library)
         self.solver = Solver()
         self.table_analyzer = CollaborativeTableAnalyzer()
         self.window_cards: Dict[int, List[Card]] = {1: [], 2: [], 3: []}
@@ -335,6 +351,11 @@ class MultiWindowWidget(QWidget):
         self.combo_w3 = QComboBox()
         self.combo_w3.currentIndexChanged.connect(lambda: self._on_window_selected(3))
         toolbar.addWidget(self.combo_w3)
+
+        self.btn_ref_manager = QPushButton("📚 Thư viện ảnh mẫu", objectName="SecondaryBtn")
+        self.btn_ref_manager.setToolTip("Quản lý 52 lá bài và các ảnh mẫu đã xác nhận")
+        self.btn_ref_manager.clicked.connect(self._open_reference_manager)
+        toolbar.addWidget(self.btn_ref_manager)
 
         toolbar.addStretch()
 
@@ -379,6 +400,12 @@ class MultiWindowWidget(QWidget):
                 combo.addItem(win.display_label, win.window_id)
             combo.blockSignals(False)
 
+    def _open_reference_manager(self) -> None:
+        """Opens Card Reference Library Manager dialog to manage confirmed card templates."""
+        dlg = CardReferenceManagerDialog(reference_library=self.reference_library, parent=self)
+        if dlg.exec():
+            self.reference_library.reload_cache()
+
     def _on_window_selected(self, window_idx: int) -> None:
         """Immediately captures the selected window, verifies it, displays it in live preview,
         detects cards, and shows optimal solution if available."""
@@ -403,11 +430,12 @@ class MultiWindowWidget(QWidget):
             panel.lbl_status.setStyleSheet("color: #FF453A; font-weight: 600;")
             return
 
-        # Run Card Detection
-        crops = self.detector.detect_cards(img)
-
-        # Run Card Recognition
-        detected_cards = self.recognizer.recognize_all(crops)
+        # Run Unified Card Recognition Pipeline (identical to Tab 2 Quét màn hình CV)
+        detected_cards, _ = recognize_cards_pipeline(
+            img,
+            detector=self.detector,
+            recognizer=self.recognizer,
+        )
 
         # Create WindowCardState
         state = WindowCardState(
@@ -489,7 +517,12 @@ class MultiWindowWidget(QWidget):
         self.btn_refresh_wins.setEnabled(False)
 
         self._thread = QThread()
-        self._worker = MultiWindowWorker(rois=rois, poll_interval_sec=0.15)
+        self._worker = MultiWindowWorker(
+            rois=rois,
+            detector=self.detector,
+            recognizer=self.recognizer,
+            poll_interval_sec=0.15,
+        )
         self._worker.moveToThread(self._thread)
 
         self._thread.started.connect(self._worker.start_loop)

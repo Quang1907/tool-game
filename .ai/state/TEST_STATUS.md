@@ -1,9 +1,9 @@
 # TEST STATUS & VERIFICATION REPORT — BINH 13 ANALYZER
 
-**Thời điểm kiểm tra gần nhất:** 2026-10-28 09:57:00 +09:00  
+**Thời điểm kiểm tra gần nhất:** 2026-10-29 07:57:44 +09:00  
 **Lệnh thực thi:** `.venv/bin/pytest tests/`  
-**Kết quả chung:** **124 / 124 tests PASSED (100%)**  
-**Thời gian chạy:** 24.63 giây  
+**Kết quả chung:** **128 / 128 tests PASSED (100%)**  
+**Thời gian chạy:** 24.86 giây  
 **Nền tảng:** macOS Sequoia 15.4.1 (ARM64 Apple Silicon) | Python 3.11.17
 
 ---
@@ -20,24 +20,20 @@
 | `tests/test_simulator.py` | 4 | **4 PASSED** | Mô phỏng Monte Carlo, CRN tính EV, xếp hạng thế bài |
 | `tests/test_database.py` | 1 | **1 PASSED** | Vòng đời Session SQLite, CRUD lịch sử ván bài |
 | `tests/test_integration.py` | 1 | **1 PASSED** | Luồng tích hợp End-to-End từ bài nạp đến giải và mô phỏng |
-| `tests/test_multi_window.py` | 8 | **8 PASSED** | 3 cửa sổ bàn chơi, CGWindowID direct capture, suy luận đối thủ |
+| `tests/test_multi_window.py` | 9 | **9 PASSED** | 3 cửa sổ bàn chơi, direct capture, suy luận đối thủ, shared pipeline |
 | `tests/test_ui.py` | 7 | **7 PASSED** | MainWindow, CardEditDialog, CardReferenceManager, ZoomableImageViewer |
 | `tests/test_vision.py` | 28 | **28 PASSED** | Xử lý ảnh, template matching, NMS, tách bài xòe, 9 mẫu bài thực tế |
-| `tests/test_card_detection_and_reference.py` | 37 | **37 PASSED** | Bộ test bắt buộc (Test A-E), kiểm chứng mẫu, 6♥/5♥ hồi quy, màu Đen/Đỏ & Rank 10 |
+| `tests/test_card_detection_and_reference.py` | 40 | **40 PASSED** | Bộ test bắt buộc (A-E), hồi quy 6♥/5♥, màu Đen/Đỏ & Rank 10, cô lập Suit Pip J/Q/K, chống ghosting 2♠ |
 
 ---
 
-## 2. BẰNG CHỨNG XÁC MINH CÁC TEST CASE BẮT BUỘC (MANDATORY TEST SUITE)
+## 2. BẰNG CHỨNG XÁC MINH TEST MỚI (FACE CARDS & GHOST WIDGET FIX)
 
-Trong file `tests/test_card_detection_and_reference.py`:
+Trong file `tests/test_card_detection_and_reference.py` (`TestFaceCardsRecognitionAndGhostWidgetFix`):
 
-- **Test A (`test_a_avatar_not_recognized_as_card_and_no_fake_kd`):**  
-  Nạp ảnh avatar người chơi hình vuông có khuôn mặt $\rightarrow$ Detector trả về `NON_CARD_OBJECT` $\rightarrow$ Recognizer trả về `card=None, confidence=0.0`. Không dự đoán `KD` hay card code giả.
-- **Test B (`test_b_rank_buttons_all_13_visible_and_independent_selection`):**  
-  Xác minh đủ 13 nút Rank `A, 2, 3..10, J, Q, K` có text hiển thị đầy đủ, không bị clipping; click chọn Rank Q giữ nguyên Suit Rô.
-- **Test C (`test_c_suit_buttons_all_4_visible_and_independent_selection`):**  
-  Xác minh đủ 4 nút Suit `♠♣♦♥`; click chọn Suit Cơ giữ nguyên Rank Q.
-- **Test D (`test_d_crop_coordinates_unification_with_original_frame`):**  
-  Xác minh bounding box của lá bài và mảng pixel `raw_patch` khớp chính xác 100% với frame gốc của bàn chơi.
-- **Test E (`test_e_confirmation_safety_and_no_saving_non_card_objects`):**  
-  Cố tình bấm lưu mẫu từ đối tượng `NON_CARD_OBJECT` $\rightarrow$ bị hệ thống chặn với cảnh báo, không ghi vào database; đóng dialog không làm thay đổi dữ liệu.
+- **Test F1 (`test_face_card_suit_isolation_not_contaminated_by_portrait`):**  
+  Tạo quân bài Tây có hình ảnh chân dung hoàng gia lớn màu đỏ/vàng thêu kim tuyến $\rightarrow$ `extract_dynamic_corner_patches` cô lập chính xác suit pip góc chuẩn ($w \le 36$), không bị bắt nhầm vào họa tiết áo của chân dung. `check_image_is_red(suit_crop)` trả về `False`.
+- **Test F2 (`test_black_court_card_never_evaluated_as_red_even_with_portrait`):**  
+  Nạp ảnh bài Tây đen (Q♠) với chân dung có viền áo đỏ $\rightarrow$ Hệ thống dự đoán đúng 100% là Q♠, tuyệt đối không bị ép sang Q♦ hoặc QH do nhiễm màu chân dung.
+- **Test F3 (`test_card_reference_manager_dialog_clearing_unparents_widgets`):**  
+  Trong `CardReferenceManagerDialog`, chuyển đổi từ lá bài 2♠ sang J♦ $\rightarrow$ Tất cả các widget của 2♠ trước đó được unparent (`parent() is None`) và ẩn hoàn toàn (`isHidden() is True`), triệt tiêu 100% hiện tượng quân bài 2♠ hiển thị đè lên các ô khác.

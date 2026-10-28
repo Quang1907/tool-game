@@ -331,32 +331,8 @@ class VisionWidget(QWidget):
         self.progress_bar.setVisible(False)
         self.btn_recognize.setEnabled(True)
         
-        # --- BẮT ĐẦU ĐOẠN SỬA ĐỔI: BỘ LỌC NGHIÊM NGẶT ---
-        strict_detected_cards = []
-        min_threshold = 0.65  # Ngưỡng an toàn tối thiểu (65%) cho cả Rank và Suit
-
-        for det in detected_cards:
-            # Kiểm tra xem có trích xuất được hình ảnh/khung của cả Rank và Suit hay không
-            if det.rank_crop is None or det.suit_crop is None:
-                print(f"[CV Filter] Loại bỏ thực thể do thiếu khung Rank hoặc Suit (ID: {det.detection_id})")
-                continue
-                
-            # Kiểm tra độ tin cậy của cả Rank và Suit có đạt chuẩn hay không
-            # (Tránh trường hợp bị nhiễu vật thể hoặc nhận diện sai cấu trúc)
-            rank_conf = getattr(det, 'rank_confidence', 0.0)
-            suit_conf = getattr(det, 'suit_confidence', 0.0)
-            
-            if rank_conf < min_threshold or suit_conf < min_threshold:
-                print(f"[CV Filter] Loại bỏ quân bài nghi ngờ dưới ngưỡng an toàn: Rank={rank_conf:.2f}, Suit={suit_conf:.2f}")
-                continue
-                
-            # Nếu thỏa mãn mọi yếu tố hình học và độ tin cậy, chuyển trạng thái thành CONFIRMED
-            det.is_uncertain = False
-            det.recognition_status = "CONFIRMED"
-            strict_detected_cards.append(det)
-            
-        self.detected_cards = strict_detected_cards
-        # --- KẾT THÚC ĐOẠN SỬA ĐỔI ---
+        # The cards are already strictly validated and confirmed by recognize_cards_pipeline
+        self.detected_cards = detected_cards
 
         self.last_debug_info = debug_info
 
@@ -386,8 +362,11 @@ class VisionWidget(QWidget):
     def _display_detected_cards(self) -> None:
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.hide()
+                w.deleteLater()
 
         has_uncertain = False
         for idx, det in enumerate(self.detected_cards):

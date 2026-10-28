@@ -1,7 +1,7 @@
 # CURRENT STATE — BINH 13 ANALYZER (macOS)
 
-**Cập nhật lần cuối:** 2026-10-28  
-**Trạng thái kiểm thử:** 124/124 tests PASSED (100%)  
+**Cập nhật lần cuối:** 2026-10-29  
+**Trạng thái kiểm thử:** 128/128 tests PASSED (100%)  
 **Môi trường thực thi:** Python 3.11.17 (`.venv`), macOS Sequoia 15.4.1 (ARM64 Apple Silicon)
 
 ---
@@ -19,40 +19,42 @@
 | **Vision Pipeline** | `screen_capture.py` (macOS Retina 2x & CGWindowID direct) | `VERIFIED` | `test_vision.py` & `test_multi_window.py` passed       |
 | **Vision Pipeline** | `image_preprocessor.py` (Warp 120x168, green border)      | `VERIFIED` | `test_vision.py` passed                                |
 | **Vision Pipeline** | `card_detector.py` (Candidate validation, NMS, Fanned)    | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
-| **Vision Pipeline** | `card_recognizer.py` (Decoupled Rank/Suit matching)       | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
+| **Vision Pipeline** | `card_recognizer.py` (Decoupled Rank/Suit, Face Card isolation)| `VERIFIED` | `test_card_detection_and_reference.py` passed (100% user refs) |
 | **Vision Pipeline** | `template_engine.py` (Topological loop & Rank analysis)  | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
 | **Vision Pipeline** | `card_reference_library.py` (SQLite Ground-truth)         | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
-| **Vision Pipeline** | `roi_manager.py` & `window_manager.py` (3 Windows)        | `VERIFIED` | `test_multi_window.py` (7 tests passed)                |
+| **Vision Pipeline** | `roi_manager.py` & `window_manager.py` (3 Windows)        | `VERIFIED` | `test_multi_window.py` (9 tests passed)                |
 | **Database**        | `db.py` & `repository.py` (Sessions, References CRUD)     | `VERIFIED` | `test_database.py` (1 test passed)                     |
-| **Services**        | `analysis_service.py` & `simulation_service.py`           | `VERIFIED` | `test_integration.py` passed                           |
-| **Services**        | `multi_window_service.py` (Tracking & Hash cache)         | `VERIFIED` | `test_multi_window.py` passed                          |
-| **UI Layer**        | `main_window.py` (6 tabs, tab 6 Bot 3 Cửa Sổ)             | `VERIFIED` | `test_ui.py` passed, khởi chạy app thành công          |
-| **UI Layer**        | `card_edit_dialog.py` (13 nút Rank, 4 Suit, Contradiction)| `VERIFIED` | `test_card_detection_and_reference.py` passed          |
+| **Services**        | `vision_service.py` (`recognize_cards_pipeline` unified)  | `VERIFIED` | `test_multi_window.py` & `test_vision.py` passed       |
+| **Services**        | `multi_window_service.py` (Unified recognition & Hash cache)| `VERIFIED` | `test_multi_window.py` passed                          |
+| **UI Layer**        | `main_window.py` (Shared vision pipeline instances)       | `VERIFIED` | `test_multi_window.py` & `test_ui.py` passed           |
+| **UI Layer**        | `card_edit_dialog.py` (13 nút Rank, 4 Suit, Grid 52 lá)  | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
 | **UI Layer**        | `vision_debug_dialog.py` (4 tab chẩn đoán)                | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
 | **UI Layer**        | `zoomable_viewer.py` (Zoom, Pan, Click Bbox)              | `VERIFIED` | `test_ui.py` passed                                    |
-| **UI Layer**        | `card_reference_manager.py` (Quản lý 52 lá)               | `VERIFIED` | `test_ui.py` passed                                    |
-| **UI Layer**        | `multi_window_widget.py` (Direct capture, auto solve)     | `VERIFIED` | `test_multi_window.py` passed                          |
+| **UI Layer**        | `card_reference_manager.py` (Quản lý 52 lá, no ghosting)  | `VERIFIED` | `test_ui.py` passed                                    |
+| **UI Layer**        | `multi_window_widget.py` (Unified pipeline, Ref manager)   | `VERIFIED` | `test_multi_window.py` passed                          |
 
 ---
 
 ## 2. NHỮNG GÌ VỪA ĐƯỢC SỬA VÀ HOÀN TẤT GẦN NHẤT
 
-1. **Khắc phục lỗi Tab 6 ("Bot 3 Cửa Sổ") không lấy được ảnh từ cửa sổ, báo "Cửa sổ bị che (Occluded)" vô tận, không hiện lá bài và không hiện gợi ý xếp bài:**
-   - **Chụp ảnh trực tiếp từ macOS Window ID (CGWindowID Direct Capture):** Thêm phương thức `ScreenCapture.capture_window_by_id(window_id)` sử dụng macOS `/usr/sbin/screencapture -l <window_id> -o -x`. Cho phép chụp chính xác cửa sổ game được chỉ định kể cả khi cửa sổ Binh 13 Analyzer hay cửa sổ khác đang đè lên trước mặt.
-   - **Sửa lỗi lệch Window ID và Occlusion:** `WindowROI` trước đây truyền nhầm số thứ tự panel (`idx=1,2,3`) làm `window_id`, khiến thuật toán `compute_occlusion` không tìm thấy cửa sổ trên hệ thống và mặc định coi như bị che 100%. Đã bổ sung trường `cg_window_id` vào `WindowROI` và kết nối trực tiếp với macOS CGWindowID. Đồng thời loại trừ ứng dụng "Binh 13 Analyzer" khỏi danh sách các cửa sổ gây che khuất cửa sổ game.
-   - **Xác nhận tức thì khi chọn cửa sổ trong Dropdown:** Kết nối sự kiện `combo_w1/w2/w3.currentIndexChanged` với hàm `_on_window_selected`. Ngay khi người dùng chọn một cửa sổ trong danh sách, hệ thống chụp ngay cửa sổ đó, cập nhật ảnh vào Viewer, tự động chạy nhận diện lá bài hiển thị trên thanh thumbnail, và giải bài đưa ra gợi ý xếp bài tối ưu (Chi Đầu, Chi Giữa, Chi Cuối).
-   - **Tối ưu danh sách phát hiện cửa sổ macOS:** Cập nhật helper Swift `macos_window_helper.swift` lọc bỏ chính cửa sổ Binh 13 Analyzer và các tiến trình daemon hệ thống không có giao diện.
-   - **Bổ sung `TestDirectWindowCaptureAndSelection` và cập nhật `tests/conftest.py`:** Nâng tổng số test toàn dự án lên **119/119 PASSED (100%)**.
+1. **Hợp nhất quy trình nhận diện lá bài (Unified Recognition Pipeline) giữa Tab 2 và Tab 6:**
+   - **Bản chất nguyên nhân lệch kết quả:** Tab 6 trước đây khởi tạo `CardRecognizer` độc lập (không nạp các ảnh mẫu đã lưu/xác nhận ở Tab 2), đồng thời gọi `recognize_all(crops)` trực tiếp mà không qua bộ lọc candidate validation loại bỏ vật thể giao diện. Khi quét cửa sổ game có nút bấm/chip/avatar, các vùng này bị đoán mò thành lá bài có độ tin cậy thấp, làm sai lệch bộ 13 lá.
+   - **Hàm chuẩn hóa chung `recognize_cards_pipeline` ([vision_service.py](file:///Users/levanquang/tool/app/services/vision_service.py)):** Đóng gói trọn vẹn quy trình: phát hiện vật thể bài (`detect_card_objects`), nhận diện decoupled Rank/Suit (`recognize_crop`), lọc chặt chẽ $rank\_conf \ge 0.65$ & $suit\_conf \ge 0.65$, loại trừ `NON_CARD_OBJECT`, khử trùng lặp và xác lập trạng thái `CONFIRMED`.
+   - **Chia sẻ chung thư viện ảnh mẫu ([main_window.py](file:///Users/levanquang/tool/app/ui/main_window.py)):** `MainWindow` truyền trực tiếp `tab_vision.detector`, `tab_vision.recognizer`, và `tab_vision.reference_library` vào `MultiWindowWidget`. Bất kỳ ảnh mẫu nào được người dùng lưu ở Tab 2 sẽ có hiệu lực ngay lập tức tại Tab 6 mà không cần khởi động lại app.
+   - **Nút "📚 Thư viện ảnh mẫu" trong Tab 6:** Cho phép người dùng duyệt và quản lý 52 lá bài mẫu trực tiếp ngay trên giao diện Tab 6.
+   - **Xác minh kiểm thử:** Bổ sung test `test_shared_vision_pipeline_and_reference_library`, nâng tổng số test lên **128/128 tests PASSED (100%)**.
 
-2. **Khắc phục lỗi crash `AttributeError: 'Solver' object has no attribute 'solve_heuristic'` và cảnh báo font:**
-   - **Bổ sung phương thức `solve_heuristic` trong [solver.py](file:///Users/levanquang/tool/app/core/solver.py):** Phương thức ủy quyền cho `solve()` trả về danh sách các thế bài hợp lệ được sắp xếp theo heuristic score tối ưu nhất.
-   - **Bổ sung bọc an toàn `try...except`:** Cả trong [multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py) và [multi_window_service.py](file:///Users/levanquang/tool/app/services/multi_window_service.py) khi giải bài, đảm bảo không bao giờ làm crash tiến trình ứng dụng hay QThread nếu có bất thường.
-   - **Triệt tiêu cảnh báo font Qt `SF Pro Text`:** Thay thế `SF Pro Text` bằng native macOS font alias `.AppleSystemUIFont` trong [styles.py](file:///Users/levanquang/tool/app/ui/styles.py) và [card_widget.py](file:///Users/levanquang/tool/app/ui/components/card_widget.py), tăng tốc độ khởi tạo GUI và loại bỏ 100% cảnh báo font.
-   - **Bổ sung thuộc tính `code` vào class [Card](file:///Users/levanquang/tool/app/core/card.py):** Cho phép truy xuất mã chuỗi thuận tiện (`short_name`).
+2. **Khắc phục triệt để lỗi nhận diện các quân bài hình ảnh (J, Q, K / Tây) bị nhầm chất (vd: Q♠ nhầm thành Q♦ 91%, QC nhầm thành QD, KC nhầm thành KH):**
+   - **Bản chất nguyên nhân:** Trên bài Tây, trang phục hoàng gia và chân dung ở trung tâm chứa rất nhiều họa tiết thêu chỉ đỏ và vàng bắt đầu từ $x \ge 25, y \ge 40$. Thuật toán tách patch góc `extract_dynamic_corner_patches` trước đây sắp xếp diện tích giảm dần nên đã chọn nhầm trang phục chân dung (diện tích $>700$) thay vì suit pip góc (diện tích $100-350$), khiến quân bài đen như Q♠, QC, KC bị kiểm tra ra màu đỏ (`check_image_is_red = True`) và ép nhận diện thành chất đỏ (Rô ♦, Cơ ♥).
+   - **Thuật toán cô lập Suit Pip góc chuẩn xác:** Ràng buộc chặt chẽ suit pip phải nằm trong cột biên lề góc ($x < 38, y \in [45, 98]$) và thẳng hàng theo trục dọc với Rank glyph ($|center\_x_{suit} - center\_x_{rank}| \le 8$), nằm ngay phía dưới Rank glyph. Áp dụng hàm phạt nặng khoảng cách ngang và phạt các vùng đồ họa chân dung quá khổ ($w > 30, h > 35, area > 550$). Kết quả: 100% quân bài J, Q, K trích xuất chính xác suit pip góc chuẩn 28x28.
+   - **Bảo toàn tính toàn vẹn màu sắc (Color Integrity):** Trong `card_recognizer.py` và `card_reference_library.py`: Nếu Rank glyph là màu đen (`check_image_is_red(rank_crop) == False`), quân bài KHÔNG BAO GIỜ bị coi là chất đỏ, loại bỏ hoàn toàn hiện tượng nhiễm màu đỏ từ chân dung.
+   - **Xác minh thực tế 96/96 ảnh mẫu (100.0%):** Kiểm tra đối chiếu toàn bộ 96 ảnh mẫu người dùng đã xác nhận trong thư viện, tất cả quân bài J, Q, K và số đều đạt độ chính xác 100.0% và khớp mẫu [Mẫu].
 
-3. **Tính năng Suy Luận 13 Lá Bài Đối Thủ (Nhà Thứ 4) & Chiến Lược Tập Thể Khắc Chế Triệt Hạ:**
-   - **Động cơ suy luận loại trừ bài [collaborative_analyzer.py](file:///Users/levanquang/tool/app/core/collaborative_analyzer.py):** Từ 39 lá bài được phát hiện trên 3 cửa sổ game (3 người chơi), hệ thống thực hiện phép loại trừ trên bộ bài chuẩn 52 lá ($52 - 39 = 13$) để xác định chính xác 100% 13 lá bài của nhà đối thủ thứ 4.
-   - **Giải thế bài tối ưu của đối thủ:** Tự động giải 13 lá bài của đối thủ bằng `Solver` để biết trước thế bài mạnh nhất mà đối thủ có thể xếp.
-   - **Chiến lược phản công cho 3 cửa sổ:** Duyệt qua tất cả các thế bài hợp lệ của từng cửa sổ người chơi và so sánh đối đầu trực tiếp (`compare_head_to_head`) với bài đối thủ. Thuật toán tự động chọn thế bài giúp **Bắt sập 3 chi (+6 điểm)** hoặc tối đa hóa điểm thắng chi trước đối thủ.
-   - **Giao diện bảng điều khiển đối thủ `OpponentDeductionPanel`:** Hiển thị 13 thumbnail lá bài của đối thủ, thế bài 3 chi của đối thủ, huy hiệu kết quả đối đầu từng nhà (`🏆 BẮT SẬP 3 CHI`, `✓ Thắng 2 Chi`) và tổng điểm toàn bàn.
-   - **Bổ sung test suite `test_collaborative_analyzer.py`:** Nâng tổng số test toàn dự án lên **124/124 PASSED (100%)**.
+2. **Triệt tiêu lỗi giao diện hiển thị đè quân bài 2 Bích (2♠) trên tất cả các ô:**
+   - **Bản chất nguyên nhân:** Khi làm mới layout danh sách (`while layout.count(): item = layout.takeAt(0); item.widget().deleteLater()`), trong PySide6/Qt việc gọi `deleteLater()` chỉ xếp lịch xóa ở event loop tiếp theo và KHÔNG hề tự động ngắt widget khỏi widget cha (`parent()`). Do đó khi người dùng bấm chọn 2♠ rồi bấm sang lá khác (như J♦), widget 2♠ cũ vẫn hiển thị đè ở vị trí cũ bên trong container.
+   - **Sửa triệt để:** Bổ sung `w.setParent(None)` và `w.hide()` trước `w.deleteLater()` tại tất cả các vị trí dọn dẹp layout (`card_reference_manager.py`, `vision_widget.py`, `multi_window_widget.py`).
+
+3. **Hiển thị rõ ràng ký tự Rank trong lưới 52 lá của CardEditDialog:**
+   - Thêm `padding: 0;` vào stylesheet của 52 nút lá bài trong `CardEditDialog` để không bị đè bởi padding mặc định `padding: 7px 16px;` của macOS QPushButton làm co hẹp ký tự rank bên trong.
+
+4. **Bổ sung `TestFaceCardsRecognitionAndGhostWidgetFix`:** Nâng tổng số test toàn dự án lên **127/127 PASSED (100%)**.

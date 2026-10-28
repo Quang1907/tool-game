@@ -167,8 +167,7 @@ class TestDirectWindowCaptureAndSelection:
         ]
 
         with patch.object(ScreenCapture, "capture_window_by_id", return_value=synth_img), \
-             patch.object(widget.detector, "detect_cards", return_value=[d.raw_crop for d in mock_detected]), \
-             patch.object(widget.recognizer, "recognize_all", return_value=mock_detected):
+             patch("app.ui.components.multi_window_widget.recognize_cards_pipeline", return_value=(mock_detected, None)):
             widget._on_window_selected(1)
 
         assert "13 lá — Đã có gợi ý tối ưu" in panel.lbl_status.text()
@@ -211,5 +210,16 @@ class TestDirectWindowCaptureAndSelection:
             assert "Đầu:" in p.lbl_opp_breakdown.text()
 
         widget.close()
+
+    def test_shared_vision_pipeline_and_reference_library(self, qapp):
+        """Verifies that MainWindow passes the exact same detector, recognizer, and reference_library to both Tab 2 and Tab 6."""
+        from app.ui.main_window import MainWindow
+
+        win = MainWindow()
+        assert win.tab_multi_bot.detector is win.tab_vision.detector
+        assert win.tab_multi_bot.recognizer is win.tab_vision.recognizer
+        assert win.tab_multi_bot.reference_library is win.tab_vision.reference_library
+        win.close()
+
 
 
