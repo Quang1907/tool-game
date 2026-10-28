@@ -157,6 +157,17 @@ class CardTemplateEngine:
                 bm = self._render_char_bitmap(r_char, sz, self._font_path)
                 if bm.size > 0:
                     self._rank_templates[r_char].append(bm)
+                if r_char == "10":
+                    bm1 = self._render_char_bitmap("1", sz, self._font_path)
+                    bm0 = self._render_char_bitmap("0", sz, self._font_path)
+                    if bm1.size > 0 and bm0.size > 0:
+                        h_max = max(bm1.shape[0], bm0.shape[0])
+                        b1 = cv2.resize(bm1, (max(1, int(bm1.shape[1] * h_max / bm1.shape[0])), h_max))
+                        b0 = cv2.resize(bm0, (max(1, int(bm0.shape[1] * h_max / bm0.shape[0])), h_max))
+                        tight_10 = np.zeros((h_max, b1.shape[1] + b0.shape[1] + 2), dtype=np.uint8)
+                        tight_10[:, 0 : b1.shape[1]] = b1
+                        tight_10[:, b1.shape[1] + 2 : b1.shape[1] + 2 + b0.shape[1]] = b0
+                        self._rank_templates["10"].append(tight_10)
 
         for suit, s_char in self.SUIT_CHARS.items():
             self._suit_templates[suit] = []
@@ -191,6 +202,18 @@ class CardTemplateEngine:
         patch_h, patch_w = patch_bin.shape[:2]
         if patch_h < 4 or patch_w < 3:
             return Rank.ACE, 0.30
+
+        # Check for multi-digit '10': two distinct tall components side by side
+        top_contours, _ = cv2.findContours(patch_bin.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        tall_comps = [
+            cnt for cnt in top_contours
+            if cv2.boundingRect(cnt)[3] >= patch_h * 0.70 and cv2.contourArea(cnt) > 40
+        ]
+        is_multi_digit_10 = (
+            len(tall_comps) >= 2
+            and (patch_w / float(patch_h) >= 0.70)
+            and abs(cv2.boundingRect(tall_comps[0])[0] - cv2.boundingRect(tall_comps[1])[0]) >= 10
+        )
 
         # Topological feature extraction: detect closed loops (holes) and their vertical positions
         contours, hierarchy = cv2.findContours(patch_bin.copy(), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
@@ -236,23 +259,34 @@ class CardTemplateEngine:
                 if score > char_best:
                     char_best = score
 
+            # Apply multi-digit consistency for 10
+            if is_multi_digit_10:
+                if r_char == "10":
+                    char_best = max(0.92, char_best * 1.5)
+                else:
+                    char_best *= 0.10
+            else:
+                if r_char == "10":
+                    char_best *= 0.15
+
             # Apply topological consistency to prevent 6 vs 5 or 9 vs 6 misclassifications
-            if has_bottom_hole and not has_top_hole:
-                # Distinct closed loop at bottom -> only 6 matches this topology
-                if r_char in ("2", "3", "4", "5", "7", "J", "K"):
-                    char_best *= 0.15
-                elif r_char == "6":
-                    char_best = min(0.99, char_best * 1.35)
-            elif has_top_hole and not has_bottom_hole:
-                # Distinct closed loop at top -> only 9 matches this topology
-                if r_char in ("2", "3", "4", "5", "6", "7", "J", "K"):
-                    char_best *= 0.15
-                elif r_char == "9":
-                    char_best = min(0.99, char_best * 1.35)
-            elif not has_bottom_hole and not has_top_hole:
-                # Digits with no holes (2, 3, 5, 7, etc.) cannot be digits with closed loops
-                if r_char in ("6", "8", "9", "Q"):
-                    char_best *= 0.20
+            if not is_multi_digit_10:
+                if has_bottom_hole and not has_top_hole:
+                    # Distinct closed loop at bottom -> only 6 matches this topology
+                    if r_char in ("2", "3", "4", "5", "7", "J", "K"):
+                        char_best *= 0.15
+                    elif r_char == "6":
+                        char_best = min(0.99, char_best * 1.35)
+                elif has_top_hole and not has_bottom_hole:
+                    # Distinct closed loop at top -> only 9 matches this topology
+                    if r_char in ("2", "3", "4", "5", "6", "7", "J", "K"):
+                        char_best *= 0.15
+                    elif r_char == "9":
+                        char_best = min(0.99, char_best * 1.35)
+                elif not has_bottom_hole and not has_top_hole:
+                    # Digits with no holes (2, 3, 5, 7, etc.) cannot be digits with closed loops
+                    if r_char in ("6", "8", "9", "Q"):
+                        char_best *= 0.20
 
             if char_best > best_score:
                 best_score = char_best

@@ -136,14 +136,38 @@ class CardReferenceLibrary:
 
     @classmethod
     def check_image_is_red(cls, img: np.ndarray) -> bool:
-        """Determines if the card image is primarily red or black."""
-        if len(img.shape) < 3:
+        """Determines if the card image is primarily red or black using robust color metrics.
+        If a full card image is provided, automatically focuses on the top-left index area
+        to avoid face-card court illustrations (e.g. red robes on Jack/King of Clubs).
+        """
+        if img is None or img.size == 0 or len(img.shape) < 3:
             return False
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        mask_r1 = cv2.inRange(hsv, np.array([0, 45, 45]), np.array([12, 255, 255]))
-        mask_r2 = cv2.inRange(hsv, np.array([165, 45, 45]), np.array([180, 255, 255]))
-        mask_red = mask_r1 | mask_r2
-        return int(cv2.countNonZero(mask_red)) > 15
+
+        h, w = img.shape[:2]
+        if h >= 80 and w >= 60:
+            roi = img[0 : int(h * 0.45), 0 : int(w * 0.45)]
+        else:
+            roi = img
+
+        # 1. Clean green selection borders if present
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        is_green = (hsv[:, :, 0] >= 35) & (hsv[:, :, 0] <= 85) & (hsv[:, :, 1] > 50)
+        cleaned = roi.copy()
+        cleaned[is_green] = [245, 245, 245]
+
+        b, g, r = cv2.split(cleaned.astype(float))
+        # Vibrant red pixels: High R and distinctly higher than G and B, with sufficient saturation
+        red_diff = r - np.maximum(g, b)
+        is_red_px = (r > 90) & (red_diff > 25) & (hsv[:, :, 1] > 50)
+        red_count = int(np.count_nonzero(is_red_px))
+
+        # Dark/black foreground pixels (low luminance and neutral hue)
+        gray = cv2.cvtColor(cleaned, cv2.COLOR_BGR2GRAY)
+        is_black_px = (gray < 110) & (red_diff <= 20)
+        black_count = int(np.count_nonzero(is_black_px))
+
+        # Must have significant red pixels and not be dominated by black foreground
+        return red_count >= 25 and (red_count > black_count * 0.35)
 
     @classmethod
     def extract_primary_glyph(
@@ -151,6 +175,7 @@ class CardReferenceLibrary:
     ) -> np.ndarray:
         """Extracts the primary foreground glyph (rank character or suit symbol),
         effectively stripping green selection borders, shadows, and background noise.
+        Supports multi-digit characters like '10' by combining major adjacent components.
         """
         if patch_bgr is None or patch_bgr.size == 0:
             return np.zeros(target_size[::-1], dtype=np.uint8)
@@ -168,32 +193,43 @@ class CardReferenceLibrary:
         # 2. Otsu thresholding for card foreground
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
 
-        # 3. Connected components analysis to isolate the main glyph
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(thresh)
+        # 3. Connected components analysis to isolate glyphs
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(thresh)
         if num_labels <= 1:
             return np.zeros(target_size[::-1], dtype=np.uint8)
 
-        best_idx = -1
-        best_area = 0
-        for i in range(1, num_labels):
-            area = stats[i, cv2.CC_STAT_AREA]
-            if area > best_area and area > 12:
-                best_area = area
-                best_idx = i
+        # Primary component is the one with the largest area
+        best_idx = max(range(1, num_labels), key=lambda i: stats[i, cv2.CC_STAT_AREA])
+        bx1, by1, bw1, bh1, ba1 = stats[best_idx]
+        if ba1 < 12:
+            return np.zeros(target_size[::-1], dtype=np.uint8)
 
-        if best_idx == -1:
-            pts = cv2.findNonZero(thresh)
-            if pts is None:
-                return np.zeros(target_size[::-1], dtype=np.uint8)
-            bx, by, bw, bh = cv2.boundingRect(pts)
-            glyph = thresh[by : by + bh, bx : bx + bw]
-        else:
-            bx = stats[best_idx, cv2.CC_STAT_LEFT]
-            by = stats[best_idx, cv2.CC_STAT_TOP]
-            bw = stats[best_idx, cv2.CC_STAT_WIDTH]
-            bh = stats[best_idx, cv2.CC_STAT_HEIGHT]
-            glyph = (labels[by : by + bh, bx : bx + bw] == best_idx).astype(np.uint8) * 255
+        valid_indices = [best_idx]
 
+        # Selectively merge companion digit for multi-digit '10' (only for rank glyphs)
+        # Companion digit must have similar height, aligned top, and be horizontally adjacent
+        if target_size == (24, 36) and num_labels > 2:
+            for i in range(1, num_labels):
+                if i == best_idx:
+                    continue
+                bx, by, bw, bh, ba = stats[i]
+                gap = max(0, max(bx1 - (bx + bw), bx - (bx1 + bw1)))
+                if (
+                    ba >= ba1 * 0.30
+                    and bh >= bh1 * 0.65
+                    and abs(by - by1) <= 12
+                    and gap <= 8
+                ):
+                    valid_indices.append(i)
+                    break
+
+        mask = np.isin(labels, valid_indices).astype(np.uint8) * 255
+        pts = cv2.findNonZero(mask)
+        if pts is None:
+            return np.zeros(target_size[::-1], dtype=np.uint8)
+
+        bx, by, bw, bh = cv2.boundingRect(pts)
+        glyph = mask[by : by + bh, bx : bx + bw]
         if glyph.size == 0 or glyph.shape[0] < 2 or glyph.shape[1] < 2:
             return np.zeros(target_size[::-1], dtype=np.uint8)
 
@@ -205,7 +241,8 @@ class CardReferenceLibrary:
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Extracts Rank patch and Suit patch dynamically using connected components
         in the top-left index area of a normalized (120, 168) card.
-        Avoids hardcoded slicing that truncates tall characters (e.g. Q, K, 10).
+        Properly handles multi-digit '10' by clustering upper components as Rank
+        and lower components as Suit, preventing rank/suit bleed.
         """
         if card_bgr is None or card_bgr.size == 0:
             return np.zeros((40, 36, 3), dtype=np.uint8), np.zeros((36, 36, 3), dtype=np.uint8)
@@ -228,45 +265,41 @@ class CardReferenceLibrary:
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(thresh)
 
-        valid_comps = []
+        rank_comps = []
+        suit_comps = []
         for i in range(1, num_labels):
             x, y, cw, ch, area = stats[i]
-            # Must be a reasonable glyph size and within left half
-            if area > 35 and cw < 45 and ch < 80 and x < 40 and y < 95:
-                valid_comps.append((x, y, cw, ch, area))
+            # Ignore thin border artifacts touching edge
+            if (x == 0 and cw <= 6) or (y == 0 and ch <= 6):
+                continue
+            if area > 35 and cw < 45 and ch < 80:
+                center_y = y + ch / 2.0
+                if center_y < 52:
+                    rank_comps.append((x, y, cw, ch, area))
+                elif center_y >= 48 and y < 98:
+                    suit_comps.append((x, y, cw, ch, area))
 
-        # Sort top-to-bottom by vertical start position y
-        valid_comps.sort(key=lambda c: c[1])
+        # Rank patch: combine all valid components in upper region (e.g. '1' and '0' for 10)
+        if rank_comps:
+            rx1 = max(0, min(c[0] for c in rank_comps) - 2)
+            rx2 = min(50, max(c[0] + c[2] for c in rank_comps) + 2)
+            ry1 = max(0, min(c[1] for c in rank_comps) - 2)
+            ry2 = min(105, max(c[1] + c[3] for c in rank_comps) + 2)
+            rank_patch = corner[ry1:ry2, rx1:rx2]
+        else:
+            rank_patch = norm[8:55, 4:48]
 
-        # Fallback default slices if components cannot be clearly segmented
-        rank_patch = norm[8:55, 6:46]
-        suit_patch = norm[52:95, 6:46]
-
-        if len(valid_comps) >= 2:
-            rx, ry, rw, rh, _ = valid_comps[0]
-            sx, sy, sw, sh, _ = valid_comps[1]
-
-            r_y1 = max(0, ry - 3)
-            r_y2 = min(105, ry + rh + 3)
-            r_x1 = max(0, rx - 3)
-            r_x2 = min(50, rx + rw + 3)
-            rank_patch = corner[r_y1:r_y2, r_x1:r_x2]
-
-            s_y1 = max(0, sy - 3)
-            s_y2 = min(105, sy + sh + 3)
-            s_x1 = max(0, sx - 3)
-            s_x2 = min(50, sx + sw + 3)
-            suit_patch = corner[s_y1:s_y2, s_x1:s_x2]
-
-        elif len(valid_comps) == 1:
-            rx, ry, rw, rh, _ = valid_comps[0]
-            if ry < 45:
-                r_y1 = max(0, ry - 3)
-                r_y2 = min(105, ry + rh + 3)
-                r_x1 = max(0, rx - 3)
-                r_x2 = min(50, rx + rw + 3)
-                rank_patch = corner[r_y1:r_y2, r_x1:r_x2]
-                suit_patch = corner[min(100, ry + rh):min(105, ry + rh + 40), max(0, rx - 3):min(50, rx + rw + 3)]
+        # Suit patch: take largest component in lower region
+        if suit_comps:
+            suit_comps.sort(key=lambda c: c[4], reverse=True)
+            main_suit = suit_comps[0]
+            sx1 = max(0, main_suit[0] - 2)
+            sx2 = min(50, main_suit[0] + main_suit[2] + 2)
+            sy1 = max(0, main_suit[1] - 2)
+            sy2 = min(105, main_suit[1] + main_suit[3] + 2)
+            suit_patch = corner[sy1:sy2, sx1:sx2]
+        else:
+            suit_patch = norm[52:95, 6:46]
 
         return rank_patch, suit_patch
 

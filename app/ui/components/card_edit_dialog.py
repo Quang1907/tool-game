@@ -519,8 +519,8 @@ class CardEditDialog(QDialog):
         # 3. Dynamic Rank crop and Suit crop
         if self.detected_card.raw_crop is not None and self.detected_card.raw_crop.size > 0:
             d_rank, d_suit = CardReferenceLibrary.extract_dynamic_corner_patches(self.detected_card.raw_crop)
-            r_img = self.detected_card.rank_crop if (self.detected_card.rank_crop is not None and self.detected_card.rank_crop.size > 0) else d_rank
-            s_img = self.detected_card.suit_crop if (self.detected_card.suit_crop is not None and self.detected_card.suit_crop.size > 0) else d_suit
+            r_img = d_rank if (d_rank is not None and d_rank.size > 0) else self.detected_card.rank_crop
+            s_img = d_suit if (d_suit is not None and d_suit.size > 0) else self.detected_card.suit_crop
 
             if r_img is not None and r_img.size > 0:
                 self._set_pixmap_to_label(self.lbl_rank_crop, r_img, 42, 42)
@@ -759,7 +759,7 @@ class CardEditDialog(QDialog):
 
         code = f"{self.selected_card.rank.char}{self.selected_card.suit.char.upper()}"
 
-        # Sanity check: verify with template engine if there is a contradiction
+        # Sanity check: verify with template engine and reference library if there is a contradiction
         from app.vision.template_engine import CardTemplateEngine
         engine = CardTemplateEngine()
         d_rank, _ = CardReferenceLibrary.extract_dynamic_corner_patches(self.detected_card.raw_crop)
@@ -769,15 +769,30 @@ class CardEditDialog(QDialog):
             else (None, 0.0)
         )
 
+        # Check if confirmed reference library supports user's selection
+        ref_rank = None
+        if self.reference_library and d_rank is not None and d_rank.size > 0:
+            q_rank_glyph = CardReferenceLibrary.extract_primary_glyph(d_rank, (24, 36))
+            r_matched, r_score, _ = self.reference_library.match_rank_glyph(q_rank_glyph, min_score=0.68)
+            if r_score >= 0.70:
+                ref_rank = r_matched
+
         logger.info(
-            "User requested saving reference for %s (bbox=%s, engine_v_rank=%s, v_conf=%.2f)",
+            "User requested saving reference for %s (bbox=%s, engine_v_rank=%s, v_conf=%.2f, ref_rank=%s)",
             code,
             self.detected_card.bbox,
             v_rank.char if v_rank else None,
             v_conf,
+            ref_rank.char if ref_rank else None,
         )
 
-        if v_rank is not None and v_conf >= 0.80 and v_rank != self.selected_card.rank:
+        has_conflict = (
+            v_rank is not None
+            and v_conf >= 0.85
+            and v_rank != self.selected_card.rank
+            and ref_rank != self.selected_card.rank
+        )
+        if has_conflict:
             contra_dialog = CardContradictionDialog(
                 card_crop=self.detected_card.raw_crop,
                 rank_crop=d_rank,

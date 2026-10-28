@@ -22,7 +22,7 @@ Tài liệu này ghi nhận trạng thái dừng của nhiệm vụ hiện tại
 - [x] Phase 4: Tri thức module (`CORE_DOMAIN.md`, `VISION_PIPELINE.md`, `UI_PRESENTATION.md`, `DATABASE_PERSISTENCE.md`, `SERVICES_ORCHESTRATION.md`).
 - [x] Phase 5: Hệ thống workflow (`SESSION_WORKFLOW.md`, `CHANGE_APPROVAL_POLICY.md`, `NEW_FEATURE.md`, `DEBUG_WORKFLOW.md`, `REFACTOR_WORKFLOW.md`, `TESTING_WORKFLOW.md`, `RELEASE_WORKFLOW.md`, `RESUME_TASK.md`).
 - [x] Phase 6: Bộ công cụ tự động hóa thực tế (`scripts/ai_tools.py`, `scripts/ai.sh` hỗ trợ `status`, `audit`, `resume`, `validate-docs`).
-- [x] Phase 7: Kiểm chứng toàn diện (Dry-run tất cả các lệnh automation, 0 broken links, 104/104 tests passed).
+- [x] Phase 7: Kiểm chứng toàn diện (Dry-run tất cả các lệnh automation, 0 broken links, 116/116 tests passed).
 
 ---
 

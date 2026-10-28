@@ -5,7 +5,7 @@
 [![Apple Silicon](https://img.shields.io/badge/Architecture-Apple%20Silicon%20(ARM64)%20%2F%20Intel-blue)](https://apple.com)
 [![Python](https://img.shields.io/badge/Python-3.11+-brightgreen?logo=python)](https://python.org)
 [![PySide6](https://img.shields.io/badge/GUI-PySide6%20(Qt%20for%20Python)-green?logo=qt)](https://qt.io)
-[![Tests](https://img.shields.io/badge/Tests-55%20passed%20(100%25)-success?logo=pytest)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-116%20passed%20(100%25)-success?logo=pytest)](https://pytest.org)
 [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
 ---

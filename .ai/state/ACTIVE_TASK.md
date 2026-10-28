@@ -18,7 +18,7 @@ Xây dựng hệ thống quản lý tri thức và quy chuẩn vận hành toàn
 
 ## 2. TIẾN ĐỘ THỰC HIỆN CÁC PHASE
 
-- [x] **Phase 0:** Audit toàn bộ repository (ngôn ngữ, framework, entry point, 104 test, Git status).
+- [x] **Phase 0:** Audit toàn bộ repository (ngôn ngữ, framework, entry point, 116 test, Git status).
 - [x] **Phase 1 (Phần 1):** Tạo `.ai/MASTER_RULES.md`, `.ai/PROJECT_VISION.md`, `.ai/PROJECT_INVENTORY.md`, `.ai/ARCHITECTURE.md`, `.ai/MODULE_MAP.md`, `.ai/DATA_FLOW.md`, `.ai/GAME_RULES.md`.
 - [x] **Phase 2 (Phần 1):** Tạo `.ai/state/CURRENT_STATE.md`, `.ai/state/ACTIVE_TASK.md`.
 - [x] **Phase 2 (Phần 2):** Tạo `.ai/state/NEXT_ACTIONS.md`, `.ai/state/KNOWN_ISSUES.md`, `.ai/state/TEST_STATUS.md`.

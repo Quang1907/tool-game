@@ -24,6 +24,7 @@ from app.database.db import DatabaseManager
 from app.vision.card_detector import CardCrop, CardDetector, CardDetectionStatus, CardDetection, DetectionDebugInfo
 from app.vision.card_recognizer import CardRecognizer, DetectedCard
 from app.vision.card_reference_library import CardReferenceLibrary
+from app.vision.template_engine import CardTemplateEngine
 
 
 @pytest.fixture
@@ -1037,5 +1038,82 @@ class TestSavedCardReferenceLabelMismatchRegression:
         ref3 = isolated_lib.add_reference(image=raw3, card=card_6h, source="user_confirmed")
         assert ref3.id != ref1.id
         assert len(isolated_lib.get_references_for_card("6H")) == 2
+
+
+class TestBlackCardsColorIntegrityAndRank10Segmentation:
+    """Verifies that:
+    1. Black cards (Spades, Clubs) are NEVER falsely classified as red (Diamonds, Hearts).
+    2. Multi-digit rank '10' preserves both '1' and '0' in corner patches and template engine.
+    3. Confirmed black card references correctly predict Spades/Clubs and never Diamonds.
+    """
+
+    def test_black_cards_never_flagged_as_red_suit(self):
+        """Spades and Clubs must strictly evaluate to is_red == False, even with anti-aliasing edges."""
+        fixture_dir = Path(__file__).parent / "fixtures" / "real_samples"
+        files_jc = list(fixture_dir.glob("JC*.png"))
+        files_kc = list(fixture_dir.glob("KC*.png"))
+        files_kd = list(fixture_dir.glob("KD*.png"))
+
+        if files_jc:
+            img_jc = cv2.imread(str(files_jc[0]))
+            assert CardReferenceLibrary.check_image_is_red(img_jc) is False, "JC was falsely flagged as red!"
+
+        if files_kc:
+            img_kc = cv2.imread(str(files_kc[0]))
+            assert CardReferenceLibrary.check_image_is_red(img_kc) is False, "KC was falsely flagged as red!"
+
+        if files_kd:
+            img_kd = cv2.imread(str(files_kd[0]))
+            assert CardReferenceLibrary.check_image_is_red(img_kd) is True, "KD must be flagged as red!"
+
+        # Synthetic black card (10S, 4C)
+        card_10s = _generate_synthetic_card("10", is_red=False)
+        assert CardReferenceLibrary.check_image_is_red(card_10s) is False
+
+        card_4c = _generate_synthetic_card("4", is_red=False)
+        assert CardReferenceLibrary.check_image_is_red(card_4c) is False
+
+    def test_rank_10_corner_extraction_preserves_both_digits(self):
+        """Corner patch segmentation on a '10' card must keep both '1' and '0' in rank_patch."""
+        card_10 = _generate_synthetic_card("10", is_red=False)
+        rank_patch, suit_patch = CardReferenceLibrary.extract_dynamic_corner_patches(card_10)
+
+        assert rank_patch is not None and rank_patch.size > 0
+        assert suit_patch is not None and suit_patch.size > 0
+
+        glyph_10 = CardReferenceLibrary.extract_primary_glyph(rank_patch, (24, 36))
+        assert cv2.countNonZero(glyph_10) >= 300, "10 glyph must contain both digits"
+
+        # Template engine match rank
+        engine = CardTemplateEngine()
+        rank_gray = cv2.cvtColor(rank_patch, cv2.COLOR_BGR2GRAY)
+        pred_rank, rank_conf = engine.match_rank(rank_gray)
+        assert pred_rank == Rank.TEN
+        assert rank_conf >= 0.70
+
+    def test_saved_black_reference_matches_correct_card_and_not_diamonds(self, isolated_lib):
+        """Saved 10S and 4S references must predict 10S and 4S with high confidence, never Diamonds."""
+        card_10s = Card(Rank.TEN, Suit.SPADES)
+        img_10s = _generate_synthetic_card("10", is_red=False)
+        isolated_lib.add_reference(image=img_10s, card=card_10s)
+
+        card_4s = Card(Rank.FOUR, Suit.SPADES)
+        img_4s = _generate_synthetic_card("4", is_red=False)
+        isolated_lib.add_reference(image=img_4s, card=card_4s)
+
+        rec = CardRecognizer(reference_library=isolated_lib)
+
+        crop_10s = CardCrop(image=img_10s, bbox=(10, 10, 120, 168), corner_crop=img_10s[0:60, 0:50])
+        pred_10 = rec.recognize_crop(crop_10s)
+        assert pred_10.card == card_10s
+        assert pred_10.card.suit != Suit.DIAMONDS
+        assert pred_10.confidence >= 0.85
+
+        crop_4s = CardCrop(image=img_4s, bbox=(20, 20, 120, 168), corner_crop=img_4s[0:60, 0:50])
+        pred_4 = rec.recognize_crop(crop_4s)
+        assert pred_4.card == card_4s
+        assert pred_4.card.suit != Suit.DIAMONDS
+        assert pred_4.confidence >= 0.85
+
 
 

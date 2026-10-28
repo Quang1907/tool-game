@@ -4,6 +4,19 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi chép t�
 
 ---
 
+## [1.2.2] — 2026-10-27
+
+### Fixed
+
+- **Khắc phục triệt để lỗi toàn bộ các lá bài đen (10♠, 5♠, 4♣, 8♣, A♠) bị gán nhầm thành chất Rô (♦) và báo bài trùng:**
+  - **Sửa phân biệt màu đỏ/đen trong [card_reference_library.py](file:///Users/levanquang/tool/app/vision/card_reference_library.py):** Ngưỡng pixel HSV cũ (> 15 px) bị nhiễu do viền khử răng cưa và đổ bóng xám đen, khiến các lá bài đen bị coi là màu đỏ và loại trừ hoàn toàn Bích/Tép trong quá trình match. Hệ thống đã chuyển sang thuật toán đo chênh lệch màu đỏ rực rỡ ($R > 90, R - \max(G, B) > 25, S > 50$) và kiểm tra tương quan với pixel đen tối ($R_{\text{red}} > 0.35 \times B_{\text{black}}$). Đồng thời tự động thu hẹp vùng kiểm tra vào góc index nếu nhận vào ảnh toàn lá để tránh áo đỏ của các quân Tây (J, Q, K).
+  - **Khắc phục lỗi cắt xén tách rời 2 chữ số của quân 10 ('1' và '0'):** Thuật toán trích xuất góc động gom nhóm cả 2 chữ số '1' và '0' ở nửa trên thành một vùng rank duy nhất, ngăn việc chữ số '0' bị gán làm rank và chữ số '1' bị gán nhầm làm suit (làm biến mất biểu tượng Bích ♠).
+  - **Tối ưu hóa nhận diện rank 10 trong [template_engine.py](file:///Users/levanquang/tool/app/vision/template_engine.py):** Thêm mẫu template số 10 liền khối và cơ chế nhận diện topo 2 ký tự số song song, match đạt độ tin cậy tuyệt đối và không còn bị nhầm sang rank 8.
+  - **Sửa bản ghi SQLite `data.db`:** Cập nhật bản ghi `8c5524b6-079f-470b-9a9c-d734316d84ac` (ảnh 5♠ nhưng trước đó bị lưu sai thành 5D) về đúng mã `5S`.
+  - **Thêm suite kiểm thử hồi quy `TestBlackCardsColorIntegrityAndRank10Segmentation`:** 116/116 tests toàn dự án đạt 100% PASSED.
+
+---
+
 ## [1.2.1] — 2026-10-27
 
 ### Fixed

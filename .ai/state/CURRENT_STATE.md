@@ -1,7 +1,7 @@
 # CURRENT STATE — BINH 13 ANALYZER (macOS)
 
 **Cập nhật lần cuối:** 2026-10-27  
-**Trạng thái kiểm thử:** 113/113 tests PASSED (100%)  
+**Trạng thái kiểm thử:** 116/116 tests PASSED (100%)  
 **Môi trường thực thi:** Python 3.11.17 (`.venv`), macOS Sequoia 15.4.1 (ARM64 Apple Silicon)
 
 ---
@@ -35,9 +35,9 @@
 
 ## 2. NHỮNG GÌ VỪA ĐƯỢC SỬA VÀ HOÀN TẤT GẦN NHẤT
 
-1. **Khắc phục lỗi nhận diện 6 Cơ (6♥) thành 5 Cơ (5♥) và lưu nhầm mẫu:**
-   - **Phân tích hình học & topo ký tự số trong `template_engine.py`:** Thêm trích xuất và phân tích vòng khép kín (closed loops/holes qua `cv2.RETR_CCOMP`). Chữ số '6' bắt buộc có lỗ khép kín ở nửa dưới ($y \ge 0.40$), trong khi '5' không có lỗ khép kín nào. Đồng thời căn giữa ký tự (center alignment) thay vì dồn trái, chấm dứt tình trạng số 6 bị match nhầm thành số 5 với độ tin cậy 97%.
-   - **Xóa bỏ mã tự động ghi đè nhãn (auto-healing) trong `card_reference_library.py`:** Loại bỏ hoàn toàn khối lệnh tự ý cập nhật nhãn trong `_add_to_cache`, đảm bảo nhãn do người dùng xác nhận và lưu vào SQLite luôn có hiệu lực tối cao, không bao giờ bị ghi đè ngầm.
-   - **Di chuyển & sửa bản ghi mẫu bị nhiễm độc trong SQLite (`data.db`):** Đã sửa bản ghi `1499111f-9cce-46f2-83a5-3cf6e4dce15c` từ `card_code='5H'` thành `card_code='6H'`, đổi tên file ảnh tương ứng.
-   - **Thêm `CardContradictionDialog` trong `card_edit_dialog.py`:** Hiển thị cảnh báo trực quan đa chiều nếu có xung đột rank, bảo vệ an toàn thư viện mẫu khi người dùng xác nhận hoặc lưu ảnh.
-   - **Bổ sung Suite 9 bài kiểm thử hồi quy `TestSavedCardReferenceLabelMismatchRegression`** trong `tests/test_card_detection_and_reference.py`, nâng tổng số test suite lên 113/113 PASSED.
+1. **Khắc phục triệt để lỗi các lá bài đen (10♠, 5♠, 4♣, 8♣, A♠) bị nhận nhầm thành chất Rô (♦) và báo bài trùng:**
+   - **Sửa hàm phân biệt màu đỏ/đen `check_image_is_red` trong `card_reference_library.py`:** Thuật toán cũ đếm pixel HSV với ngưỡng cực thấp (> 15 px) khiến các vùng viền khử răng cưa/bóng mờ xám đậm trên lá bài đen bị nhận nhầm là màu đỏ. Hệ thống chuyển sang đo lường màu đỏ rực rỡ ($R > 90, R - \max(G, B) > 25, S > 50$) và so sánh tương quan với pixel đen/tối ($R_{\text{red}} > 0.35 \times B_{\text{black}}$). Đồng thời tự động thu hẹp phạm vi kiểm tra vào góc index nếu nhận vào ảnh toàn lá để tránh ảnh minh họa áo đỏ của các quân Tây (J, Q, K).
+   - **Xử lý số 10 hai chữ số ('1' và '0') trong `card_reference_library.py`:** Phân đoạn dynamic corner patch gom nhóm cả 2 thành phần số '1' và '0' ở nửa trên thành một vùng rank thống nhất, không còn cắt nhầm số '0' làm rank và số '1' làm suit khiến chất Bích bị mất.
+   - **Cải tiến `CardTemplateEngine` cho quân 10:** Thêm template số 10 thu nhỏ liền khối và thuật toán nhận diện topo 2 ký tự số song song, match chính xác 100% không còn bị dự đoán nhầm thành rank 8.
+   - **Sửa bản ghi nhiễm độc trong SQLite `data.db`:** Bản ghi `8c5524b6-079f-470b-9a9c-d734316d84ac` có ảnh thực tế là 5♠ nhưng bị lưu nhãn sai thành `5D` đã được cập nhật thành `5S` chuẩn xác.
+   - **Bổ sung `TestBlackCardsColorIntegrityAndRank10Segmentation`:** 3 bài test xác minh độc lập, nâng toàn bộ test suite dự án lên 116/116 PASSED (100%).

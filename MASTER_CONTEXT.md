@@ -10,7 +10,7 @@
 - **Mục tiêu cốt lõi:** Ứng dụng Desktop chuyên nghiệp trên macOS (Apple Silicon ARM64 & Intel), kết hợp **Computer Vision** (nhận diện bài tự do từ màn hình, hỗ trợ 3 bàn chơi cùng lúc, thư viện ảnh mẫu tự học) và **Monte Carlo EV Optimization** (giải 36,036 thế bài, mô phỏng 10,000+ ván đấu với Common Random Numbers để tìm cách xếp bài có giá trị kỳ vọng điểm số cao nhất).
 - **Công nghệ chính:** Python 3.11.17 (`.venv`), PySide6 (Qt 6.8+), OpenCV, NumPy, SQLite 3.
 - **Entry Point:** [app/main.py](file:///Users/levanquang/tool/app/main.py) | **Cách chạy:** `.venv/bin/python -m app.main`.
-- **Cách test:** `.venv/bin/pytest tests/` (Hiện tại: 104/104 tests passed 100%).
+- **Cách test:** `.venv/bin/pytest tests/` (Hiện tại: 116/116 tests passed 100%).
 
 ---
 
@@ -34,7 +34,7 @@
 | **Nhiệm vụ đang thực hiện** | [.ai/state/ACTIVE_TASK.md](file:///Users/levanquang/tool/.ai/state/ACTIVE_TASK.md) |
 | **Nhiệm vụ tiếp theo & Ưu tiên** | [.ai/state/NEXT_ACTIONS.md](file:///Users/levanquang/tool/.ai/state/NEXT_ACTIONS.md) |
 | **Vấn đề đã biết & Nợ kỹ thuật** | [.ai/state/KNOWN_ISSUES.md](file:///Users/levanquang/tool/.ai/state/KNOWN_ISSUES.md) |
-| **Báo cáo kiểm thử & 104 test cases** | [.ai/state/TEST_STATUS.md](file:///Users/levanquang/tool/.ai/state/TEST_STATUS.md) |
+| **Báo cáo kiểm thử & 116 test cases** | [.ai/state/TEST_STATUS.md](file:///Users/levanquang/tool/.ai/state/TEST_STATUS.md) |
 | **Bản đồ file mã nguồn theo nhiệm vụ** | [.ai/MODULE_MAP.md](file:///Users/levanquang/tool/.ai/MODULE_MAP.md) |
 | **Kiến trúc tổng thể & Nguyên tắc tầng** | [.ai/ARCHITECTURE.md](file:///Users/levanquang/tool/.ai/ARCHITECTURE.md) |
 | **Luồng dữ liệu đầu-cuối** | [.ai/DATA_FLOW.md](file:///Users/levanquang/tool/.ai/DATA_FLOW.md) |

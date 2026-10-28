@@ -1,9 +1,9 @@
 # TEST STATUS & VERIFICATION REPORT — BINH 13 ANALYZER
 
-**Thời điểm kiểm tra gần nhất:** 2026-10-26 10:28:23 +09:00  
+**Thời điểm kiểm tra gần nhất:** 2026-10-27 11:32:17 +09:00  
 **Lệnh thực thi:** `.venv/bin/pytest tests/`  
-**Kết quả chung:** **104 / 104 tests PASSED (100%)**  
-**Thời gian chạy:** 22.02 giây  
+**Kết quả chung:** **116 / 116 tests PASSED (100%)**  
+**Thời gian chạy:** 21.89 giây  
 **Nền tảng:** macOS Sequoia 15.4.1 (ARM64 Apple Silicon) | Python 3.11.17
 
 ---
@@ -20,9 +20,9 @@
 | `tests/test_database.py` | 1 | **1 PASSED** | Vòng đời Session SQLite, CRUD lịch sử ván bài |
 | `tests/test_integration.py` | 1 | **1 PASSED** | Luồng tích hợp End-to-End từ bài nạp đến giải và mô phỏng |
 | `tests/test_multi_window.py` | 5 | **5 PASSED** | Quản lý 3 cửa sổ bàn chơi, Retina 2x crop, tracking bài đổi vị trí |
-| `tests/test_ui.py` | 5 | **5 PASSED** | MainWindow, CardEditDialog, CardReferenceManager, ZoomableImageViewer |
+| `tests/test_ui.py` | 7 | **7 PASSED** | MainWindow, CardEditDialog, CardReferenceManager, ZoomableImageViewer |
 | `tests/test_vision.py` | 28 | **28 PASSED** | Xử lý ảnh, template matching, NMS, tách bài xòe, 9 mẫu bài thực tế |
-| `tests/test_card_detection_and_reference.py` | 25 | **25 PASSED** | Bộ test bắt buộc (Test A-E), kiểm chứng thư viện ảnh mẫu, tách biệt Rank/Suit |
+| `tests/test_card_detection_and_reference.py` | 37 | **37 PASSED** | Bộ test bắt buộc (Test A-E), kiểm chứng mẫu, 6♥/5♥ hồi quy, màu Đen/Đỏ & Rank 10 |
 
 ---
 
