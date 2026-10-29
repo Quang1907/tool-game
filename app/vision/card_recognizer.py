@@ -283,9 +283,9 @@ class CardRecognizer:
                 ref_match.card is not None
                 and ref_match.card.rank == final_rank
                 and (suit_matches or confident_ref_suit)
-                and ref_match.rank_score >= 0.70
-                and ref_match.suit_score >= 0.70
-                and ref_match.score >= 0.70
+                and ref_match.rank_score >= 0.68
+                and ref_match.suit_score >= 0.68
+                and ref_match.score >= 0.68
             ):
                 is_ref_match = True
                 matched_ref_id = ref_match.reference_id

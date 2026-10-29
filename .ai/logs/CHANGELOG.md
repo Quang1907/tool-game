@@ -4,6 +4,29 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi chép t�
 
 ---
 
+## [1.2.5] — 2026-10-29
+
+### Fixed
+
+- **Khắc phục triệt để lỗi một số quân bài đã xác nhận đúng nhưng không thể nhận diện đúng hoàn toàn (ví dụ 3♠, 6♠ không hiện `[Mẫu]` mà điểm đối chiếu mẫu chỉ đạt 44%, hiển thị sai sang 3♣ trong danh sách gợi ý):**
+  - **Bổ sung biên trượt dung sai tịnh tiến $\pm 2$ pixel (Translational Invariance):** Loại bỏ giới hạn cửa sổ cố định $1 \times 1$ của phép đo `cv2.matchTemplate(q, ref, cv2.TM_CCOEFF_NORMED)`. Thêm biên đệm viền 2 pixel (`cv2.copyMakeBorder(query, 2, 2, 2, 2, cv2.BORDER_CONSTANT)`) trước khi khớp mẫu glyph và lấy cực đại `np.max(res)` trong [card_reference_library.py](file:///Users/levanquang/tool/app/vision/card_reference_library.py). Điều này ngăn ngừa hiện tượng điểm tương quan rớt từ $0.99$ xuống $0.57$ chỉ vì lệch 1-2 pixel khi crop.
+  - **Hàn gắn đứt gãy cuống biểu tượng Bích / Tép (Stem Preservation):** Áp dụng phép đóng hình thái học (`cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)`) với kernel ellipse $3 \times 3$ ngay sau khi binarize Otsu, kết hợp cơ chế tự động gom cụm cuống nằm ngay dưới thân chất. Khắc phục triệt để việc phần cuống bị ngắt lìa khiến thân bích bị cụt cuống và kéo giãn biến dạng khi resize về $28 \times 28$.
+  - **Chuẩn hóa ngưỡng chấp thuận `[Mẫu]` ([card_recognizer.py](file:///Users/levanquang/tool/app/vision/card_recognizer.py)):** Đồng bộ ngưỡng chấp nhận cờ `is_reference_match = True` về mức $\ge 0.68$, đảm bảo hiển thị đúng nhãn `[Mẫu]` xanh cho tất cả các lá bài đã có mẫu trong cơ sở dữ liệu.
+  - **Kết quả nghiệm thu:** 13/13 lá bài trên ảnh thực tế [IMG_1287.PNG](file:///Users/levanquang/Downloads/IMG_1287.PNG) đều đạt nhãn `[Mẫu]` $100\%$. Thêm unit test `test_subpixel_shift_and_separated_stem_glyph_matching`. Toàn bộ test suite đạt **130/130 PASSED (100%)**.
+
+---
+
+## [1.2.4] — 2026-10-29
+
+### Fixed
+
+- **Đồng bộ hóa pipeline nhận diện lá bài và loại bỏ hoàn toàn hiện tượng nhận diện sai 2 Bích (2♠) thành 2 Tép (2♣) giữa Tab 2 và Tab 6:**
+  - Hợp nhất hàm nhận diện chung `recognize_cards_pipeline` trong [vision_service.py](file:///Users/levanquang/tool/app/services/vision_service.py) và chia sẻ instance bộ nhớ giữa Tab 2 và Tab 6.
+  - Loại bỏ bản ghi corrupt `099c710e` (lá 4♠ bị dán nhãn 4C) trong thư viện mẫu.
+  - Đảm bảo độ ưu tiên tuyệt đối của Full Card Reference khi đã khớp bài đã xác nhận.
+
+---
+
 ## [1.2.3] — 2026-10-28
 
 ### Fixed

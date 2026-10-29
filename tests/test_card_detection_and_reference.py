@@ -1225,6 +1225,28 @@ class TestFaceCardsRecognitionAndGhostWidgetFix:
         assert det.card_code == "2S"
         assert det.is_reference_match is True
 
+    def test_subpixel_shift_and_separated_stem_glyph_matching(self, isolated_lib):
+        """Translational shift (+-2px) and separated stem in spade glyph must still match with >= 0.80 confidence."""
+        card_3s = Card(Rank.THREE, Suit.SPADES)
+        img_3s = _generate_synthetic_card("3", is_red=False)
+        isolated_lib.add_reference(image=img_3s, card=card_3s)
 
+        # Simulate a crop shifted by 2 pixels horizontally and 1 pixel vertically
+        h, w = img_3s.shape[:2]
+        M = np.float32([[1, 0, 2], [0, 1, 1]])
+        shifted_img = cv2.warpAffine(img_3s, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
 
+        recognizer = CardRecognizer(reference_library=isolated_lib)
+        crop = CardCrop(
+            image=shifted_img,
+            bbox=(10, 10, w, h),
+            corner_crop=shifted_img[0:90, 0:50].copy(),
+        )
 
+        det = recognizer.recognize_crop(crop)
+        assert det.card is not None
+        assert det.card.rank == Rank.THREE
+        assert det.card.suit == Suit.SPADES
+        assert det.card_code == "3S"
+        assert det.is_reference_match is True, "Shifted card MUST match confirmed reference with [Mẫu]"
+        assert det.confidence >= 0.85
