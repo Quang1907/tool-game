@@ -1,28 +1,31 @@
 # ACTIVE TASK — BINH 13 ANALYZER
 
-**Nhiệm vụ hiện tại:** Hợp nhất quy trình và hàm nhận diện lá bài (Unified Card Recognition Pipeline) giữa Tab 2 (Quét màn hình CV) và Tab 6 (Bot 3 Cửa Sổ) để đồng bộ 100% kết quả nhận diện và thư viện ảnh mẫu.  
+**Nhiệm vụ hiện tại:** Khắc phục triệt để lỗi Tab 6 nhận diện 2 Bích (2♠) thành 2 Tép (2♣) và đồng bộ mã nguồn nhận diện lá bài giữa Tab 2 và Tab 6.  
 **Người yêu cầu:** User / Product Owner  
-**Trạng thái nhiệm vụ:** `COMPLETED`
+**Trạng thái nhiệm vụ:** `COMPLETED / VERIFIED` (129/129 tests PASSED)
 
 ---
 
-## 1. MỤC TIÊU NHIỆM VỤ
+## 1. PHÂN TÍCH NGUYÊN NHÂN GỐC RỄ (ROOT CAUSE AUDIT)
 
-1. **Thực trạng và nguyên nhân lệch kết quả giữa Tab 2 và Tab 6:**
-   - Tab 2 (`VisionWidget`): Khởi tạo `CardReferenceLibrary` riêng, chạy qua `VisionWorker` và áp dụng bộ lọc nghiêm ngặt loại bỏ các đối tượng không phải bài (avatar, nút bấm UI, chip cược) với ngưỡng tin cậy $rank\_conf \ge 0.65$ và $suit\_conf \ge 0.65$.
-   - Tab 6 (`MultiWindowWidget` / `MultiWindowWorker`): Khởi tạo `CardRecognizer` độc lập (không chia sẻ thư viện ảnh mẫu đã lưu của Tab 2), gọi trực tiếp `recognize_all(crops)` mà không chạy qua bộ lọc chuẩn hóa nghiêm ngặt. Dẫn đến các nút bấm, vật thể trên bàn chơi bị nhận nhầm thành lá bài giả, gây sai lệch kết quả hoặc không nhận diện đúng.
+1. **Lệch kết quả giữa Tab 2 và Tab 6:**
+   - **Mã nguồn nhận diện bị phân mảnh:** Tab 6 (`MultiWindowWidget` / `MultiWindowWorker`) tự khởi tạo `CardRecognizer` riêng mà không dùng chung instance với Tab 2 (`VisionWidget`), đồng thời gọi `recognize_all(crops)` trực tiếp mà không qua bộ lọc candidate validation như Tab 2.
+   - **Lỗi mẫu tham chiếu bị gán sai nhãn (Corrupt Reference):** Trong thư viện ảnh mẫu người dùng, mẫu `099c710e` vốn là lá **4 Bích (4♠)** nhưng bị lưu nhầm nhãn thành `4C` (4 Tép).
+   - **Xung đột độ ưu tiên nhận diện (Priority Inversion):** Khi quét cửa sổ game có lá 2♠:
+     - `CardReferenceLibrary.match_crop` tìm thấy mẫu 2♠ với độ tương đồng $0.99$ ($99\%$).
+     - Tuy nhiên hàm `match_suit_glyph` đối chiếu glyph chất rời rạc (28x28) lại tìm trúng mẫu `099c710e` (bị gắn nhãn 4C) với điểm số $0.9917$, ép chất thành `Suit.CLUBS`.
+     - Điều kiện kiểm tra tham chiếu cũ yêu cầu `ref_match.card.suit == final_suit`, do đó khi `SPADES != CLUBS`, hệ thống loại bỏ luôn kết quả tham chiếu 2♠ $99\%$ và trả về kết quả sai là `2♣` kèm lý do `Ảnh mẫu có trong thư viện nhưng chưa được sử dụng`.
 
-2. **Giải pháp kiến trúc hợp nhất (Unified Pipeline):**
-   - Xây dựng hàm chuẩn hóa `recognize_cards_pipeline(image, detector, recognizer, min_confidence=0.65)` trong `app/services/vision_service.py` đóng gói toàn bộ quy trình:
-     1. Quét đối tượng thẻ bài (`detect_card_objects`).
-     2. Nhận diện Rank & Suit tách biệt (`recognize_crop`).
-     3. Lọc nghiêm ngặt: yêu cầu có đủ rank/suit crop, $rank\_conf \ge 0.65$, $suit\_conf \ge 0.65$, loại trừ vật thể `NON_CARD_OBJECT`.
-     4. Khử trùng lặp và xác nhận trạng thái `CONFIRMED`.
-   - Cả Tab 2 (`VisionWorker`) và Tab 6 (`MultiWindowWidget._on_window_selected`, `MultiWindowWorker.start_loop`) đều sử dụng chung 1 hàm duy nhất này.
-   - Chia sẻ chung instance `CardReferenceLibrary` và `CardRecognizer` từ `MainWindow` truyền xuống `MultiWindowWidget`, đảm bảo bất kỳ ảnh mẫu nào được lưu ở Tab 2 thì Tab 6 nhận được ngay lập tức.
-   - Bổ sung nút "📚 Thư viện ảnh mẫu" trên thanh công cụ của Tab 6 để người dùng có thể mở quản lý ảnh mẫu trực tiếp từ Tab 6.
+---
 
-3. **Kết quả xác minh nghiệm thu:**
-   - 100% các luồng quét hình ảnh của Tab 2 và Tab 6 đều gọi qua `recognize_cards_pipeline`.
-   - Tab 2 và Tab 6 dùng chung 1 instance `CardReferenceLibrary` và `CardRecognizer`.
-   - Đã chạy kiểm thử thực tế toàn bộ hệ thống bằng lệnh `.venv/bin/pytest tests/`: **128 / 128 tests PASSED (100%)**.
+## 2. GIẢI PHÁP ĐÃ TRIỂN KHAI
+
+1. **Dọn dẹp mẫu tham chiếu lỗi:** Xóa mẫu `099c710e` bị gán sai nhãn trong cơ sở dữ liệu thư viện ảnh mẫu.
+2. **Nâng cấp độ ưu tiên của Full Card Reference ([card_recognizer.py](file:///Users/levanquang/tool/app/vision/card_recognizer.py)):**
+   - Khi một lá bài khớp với mẫu tham chiếu đã xác nhận có Rank trùng khớp và độ tin cậy chất $\ge 0.78$ và tổng thể $\ge 0.78$, chất từ mẫu tham chiếu toàn diện được công nhận là chân lý, không bao giờ bị ghi đè bởi một glyph chất rời rạc từ lá bài khác.
+3. **Hợp nhất hàm nhận diện chung `recognize_cards_pipeline` ([vision_service.py](file:///Users/levanquang/tool/app/services/vision_service.py)):**
+   - Cả Tab 2 và Tab 6 đều gọi qua hàm chuẩn hóa duy nhất này.
+   - Chia sẻ chung instance `CardReferenceLibrary`, `CardRecognizer`, `CardDetector` từ `MainWindow`.
+4. **Kiểm thử tự động:**
+   - Bổ sung test `test_2_spades_never_confused_with_clubs_when_matching_references` trong `tests/test_card_detection_and_reference.py`.
+   - Toàn bộ 129/129 tests PASSED (100%).

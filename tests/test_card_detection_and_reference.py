@@ -1205,6 +1205,26 @@ class TestFaceCardsRecognitionAndGhostWidgetFix:
 
         dlg.close()
 
+    def test_2_spades_never_confused_with_clubs_when_matching_references(self, isolated_lib):
+        """Card 2S matching a confirmed 2S reference sample must NEVER be overridden to 2C by isolated suit glyph noise."""
+        card_2s = Card(Rank.TWO, Suit.SPADES)
+        img_2s = _generate_synthetic_card("2", is_red=False)
+        isolated_lib.add_reference(image=img_2s, card=card_2s)
+
+        recognizer = CardRecognizer(reference_library=isolated_lib)
+        crop = CardCrop(
+            image=img_2s.copy(),
+            bbox=(0, 0, 120, 168),
+            corner_crop=img_2s[0:90, 0:50].copy(),
+        )
+
+        det = recognizer.recognize_crop(crop)
+        assert det.card is not None
+        assert det.card.rank == Rank.TWO
+        assert det.card.suit == Suit.SPADES
+        assert det.card_code == "2S"
+        assert det.is_reference_match is True
+
 
 
 

@@ -1,11 +1,12 @@
-"""Asynchronous worker and unified Computer Vision recognition pipeline."""
+"""Asynchronous worker for executing Computer Vision recognition without blocking UI thread."""
 
 from __future__ import annotations
-import time
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import List, Optional
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
+import time
+from typing import Callable, Dict, List, Optional, Tuple
 from app.vision.card_detector import CardCrop, CardDetector, DetectionDebugInfo
 from app.vision.card_recognizer import CardRecognizer, DetectedCard
 
@@ -17,19 +18,8 @@ def recognize_cards_pipeline(
     min_confidence: float = 0.65,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> Tuple[List[DetectedCard], DetectionDebugInfo]:
-    """Unified Computer Vision Card Recognition Pipeline used identically across
-    Tab 2 (Quét màn hình CV) and Tab 6 (Bot 3 Cửa Sổ).
-
-    Executes:
-    1. Real Computer Vision Card Detection: discovers candidate bounding boxes (detect_card_objects).
-    2. Decoupled Rank & Suit Recognition: evaluates card crops using confirmed reference samples
-       and normalized template cross-correlation (recognize_crop).
-    3. Strict Candidate Validation:
-       - Requires non-null detected card.
-       - Rejects non-card UI objects and avatars (crop_status in ('NON_CARD_OBJECT', 'INVALID_CARD_CROP')).
-       - Requires both rank_confidence >= min_confidence (0.65) and suit_confidence >= min_confidence (0.65).
-       - Confirms state and sets recognition_status = 'CONFIRMED'.
-    4. Deduplication: keeps the highest confidence detection for each unique card.
+    """Unified, single source-of-truth Computer Vision pipeline for detecting and recognizing cards.
+    Used by both Tab 2 (Quét màn hình CV) and Tab 6 (Bot 3 Cửa Sổ) to guarantee 100% identical results.
     """
     if detector is None:
         detector = CardDetector()
@@ -38,7 +28,6 @@ def recognize_cards_pipeline(
 
     if image is None or image.size == 0:
         return [], DetectionDebugInfo()
-
     if progress_callback:
         progress_callback(10, 100, "Đang quét và định vị hình ảnh các lá bài...")
 
@@ -74,6 +63,9 @@ def recognize_cards_pipeline(
         if det.card is None:
             continue
 
+        if det.rank_crop is None or det.suit_crop is None:
+            continue
+
         crop_st = getattr(det, "crop_status", "")
         if crop_st in ("NON_CARD_OBJECT", "INVALID_CARD_CROP"):
             continue
@@ -88,7 +80,7 @@ def recognize_cards_pipeline(
         det.is_uncertain = False
         det.recognition_status = "CONFIRMED"
 
-        # Deduplication: If the same card code is detected multiple times, keep the one with higher overall confidence
+        # Deduplication: If the same card code is detected multiple times, keep the one with higher confidence
         code = det.card_code
         if code in seen_codes:
             if det.confidence > seen_codes[code].confidence:
@@ -140,3 +132,4 @@ class VisionWorker(QObject):
             self.finished.emit(detected_cards, debug_info)
         except Exception as e:
             self.error.emit(str(e))
+

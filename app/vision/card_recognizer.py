@@ -269,13 +269,20 @@ class CardRecognizer:
         if ref_match is not None:
             alternatives = list(ref_match.alternative_candidates)
             # CRITICAL ARCHITECTURAL CONSTRAINT (Part B, C, G):
-            # A reference match is ONLY accepted as ground truth if its rank and suit
-            # EXACTLY MATCH the independently recognized rank and suit, with high scores!
+            # A reference match is accepted as ground truth if its rank matches the detected rank
+            # and either matches the suit or has high confidence (>= 0.75) across full, rank, and suit.
             # Under NO CIRCUMSTANCES can a sample of 9D change an image of QD into 9D!
+            suit_matches = ref_match.card is not None and ref_match.card.suit == final_suit
+            confident_ref_suit = (
+                ref_match.card is not None
+                and ref_match.rank_score >= 0.75
+                and ref_match.suit_score >= 0.78
+                and ref_match.score >= 0.78
+            )
             if (
                 ref_match.card is not None
                 and ref_match.card.rank == final_rank
-                and ref_match.card.suit == final_suit
+                and (suit_matches or confident_ref_suit)
                 and ref_match.rank_score >= 0.70
                 and ref_match.suit_score >= 0.70
                 and ref_match.score >= 0.70
@@ -284,6 +291,7 @@ class CardRecognizer:
                 matched_ref_id = ref_match.reference_id
                 matched_similarity = ref_match.score
                 ref_crop_img = self.reference_library.get_reference_image(ref_match.reference_id)
+                final_suit = ref_match.card.suit
                 final_rank_conf = max(final_rank_conf, ref_match.rank_score)
                 final_suit_conf = max(final_suit_conf, ref_match.suit_score)
 
