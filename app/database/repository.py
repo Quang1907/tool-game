@@ -1,6 +1,7 @@
 """Repository pattern implementation for analysis sessions and simulation data."""
 
 from __future__ import annotations
+import datetime
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -167,3 +168,186 @@ class AnalysisRepository:
         with self.db.get_connection() as conn:
             cursor = conn.execute("DELETE FROM analysis_sessions WHERE id = ?", (session_id,))
             return cursor.rowcount > 0
+
+    # =========================================================================
+    # CARD SLOTS (TAB 7)
+    # =========================================================================
+
+    def get_all_card_slots(self) -> List[Any]:
+        """Returns all 13 card slots ordered by slot_number (1 to 13)."""
+        from app.automation.gesture_models import CardSlot
+        with self.db.get_connection() as conn:
+            cursor = conn.execute("SELECT * FROM card_slots ORDER BY slot_number ASC")
+            rows = cursor.fetchall()
+            if not rows:
+                return self.init_default_card_slots()
+            return [
+                CardSlot(
+                    slot_number=r["slot_number"],
+                    name=r["name"],
+                    rel_x=r["rel_x"],
+                    rel_y=r["rel_y"],
+                    group_name=r["group_name"],
+                    updated_at=r["updated_at"],
+                )
+                for r in rows
+            ]
+
+    def save_card_slot(self, slot: Any) -> None:
+        """Inserts or updates a card slot position."""
+        with self.db.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO card_slots (slot_number, name, rel_x, rel_y, group_name, updated_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(slot_number) DO UPDATE SET
+                    name = excluded.name,
+                    rel_x = excluded.rel_x,
+                    rel_y = excluded.rel_y,
+                    group_name = excluded.group_name,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (slot.slot_number, slot.name, slot.rel_x, slot.rel_y, slot.group_name),
+            )
+
+    def init_default_card_slots(self) -> List[Any]:
+        """Initializes standard 13 card slot positions on game table layout."""
+        from app.automation.gesture_models import CardSlot
+        default_slots: List[CardSlot] = []
+
+        # Chi Đầu (3 cards): Top row, centered
+        # x: 0.35, 0.50, 0.65; y: 0.28
+        for i, rx in enumerate([0.35, 0.50, 0.65], start=1):
+            default_slots.append(CardSlot(slot_number=i, name=f"Chi Đầu {i}", rel_x=rx, rel_y=0.28, group_name="front"))
+
+        # Chi Giữa (5 cards): Middle row
+        # x: 0.22, 0.36, 0.50, 0.64, 0.78; y: 0.50
+        for i, rx in enumerate([0.22, 0.36, 0.50, 0.64, 0.78], start=4):
+            default_slots.append(CardSlot(slot_number=i, name=f"Chi Giữa {i-3}", rel_x=rx, rel_y=0.50, group_name="middle"))
+
+        # Chi Cuối (5 cards): Bottom row
+        # x: 0.22, 0.36, 0.50, 0.64, 0.78; y: 0.72
+        for i, rx in enumerate([0.22, 0.36, 0.50, 0.64, 0.78], start=9):
+            default_slots.append(CardSlot(slot_number=i, name=f"Chi Cuối {i-8}", rel_x=rx, rel_y=0.72, group_name="back"))
+
+        for s in default_slots:
+            self.save_card_slot(s)
+        return default_slots
+
+    # =========================================================================
+    # GESTURE SAMPLES (156 PAIRS)
+    # =========================================================================
+
+    def get_gesture_samples(
+        self, source_slot: Optional[int] = None, target_slot: Optional[int] = None
+    ) -> List[Any]:
+        """Retrieves gesture samples filtered by source and/or target slot."""
+        from app.automation.gesture_models import GestureSample, GesturePoint
+        query = "SELECT * FROM gesture_samples WHERE 1=1"
+        params: List[Any] = []
+        if source_slot is not None:
+            query += " AND source_slot = ?"
+            params.append(source_slot)
+        if target_slot is not None:
+            query += " AND target_slot = ?"
+            params.append(target_slot)
+        query += " ORDER BY created_at DESC"
+
+        with self.db.get_connection() as conn:
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
+            samples: List[GestureSample] = []
+            for r in rows:
+                raw_pts = json.loads(r["points_json"]) if r["points_json"] else []
+                pts = [GesturePoint.from_dict(p) for p in raw_pts]
+                meta = json.loads(r["metadata_json"]) if r["metadata_json"] else {}
+                samples.append(
+                    GestureSample(
+                        id=r["id"],
+                        source_slot=r["source_slot"],
+                        target_slot=r["target_slot"],
+                        name=r["name"],
+                        points=pts,
+                        mouse_down_delay_ms=r["mouse_down_delay_ms"],
+                        mouse_up_delay_ms=r["mouse_up_delay_ms"],
+                        total_duration_ms=r["total_duration_ms"],
+                        is_verified=bool(r["is_verified"]),
+                        weight=float(r["weight"]),
+                        created_at=r["created_at"],
+                        metadata=meta,
+                    )
+                )
+            return samples
+
+    def save_gesture_sample(self, sample: Any) -> None:
+        """Saves or updates a gesture sample."""
+        points_json = json.dumps([p.to_dict() for p in sample.points])
+        meta_json = json.dumps(sample.metadata or {})
+        with self.db.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO gesture_samples (
+                    id, source_slot, target_slot, name, points_json,
+                    mouse_down_delay_ms, mouse_up_delay_ms, total_duration_ms,
+                    is_verified, weight, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    points_json = excluded.points_json,
+                    mouse_down_delay_ms = excluded.mouse_down_delay_ms,
+                    mouse_up_delay_ms = excluded.mouse_up_delay_ms,
+                    total_duration_ms = excluded.total_duration_ms,
+                    is_verified = excluded.is_verified,
+                    weight = excluded.weight,
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    sample.id,
+                    sample.source_slot,
+                    sample.target_slot,
+                    sample.name,
+                    points_json,
+                    sample.mouse_down_delay_ms,
+                    sample.mouse_up_delay_ms,
+                    sample.total_duration_ms,
+                    1 if sample.is_verified else 0,
+                    sample.weight,
+                    sample.created_at,
+                    meta_json,
+                ),
+            )
+
+    def delete_gesture_sample(self, sample_id: str) -> bool:
+        """Deletes a gesture sample by ID."""
+        with self.db.get_connection() as conn:
+            cursor = conn.execute("DELETE FROM gesture_samples WHERE id = ?", (sample_id,))
+            return cursor.rowcount > 0
+
+    def export_gestures_json(self) -> str:
+        """Exports all slots and gesture samples into a portable JSON string."""
+        slots = [s.to_dict() for s in self.get_all_card_slots()]
+        samples = [s.to_dict() for s in self.get_gesture_samples()]
+        export_data = {
+            "version": "1.0",
+            "exported_at": str(datetime.datetime.now().isoformat()) if "datetime" in globals() else "",
+            "slots": slots,
+            "samples": samples,
+        }
+        return json.dumps(export_data, indent=2, ensure_ascii=False)
+
+    def import_gestures_json(self, json_str: str) -> int:
+        """Imports slots and gesture samples from JSON, returning number of imported samples."""
+        from app.automation.gesture_models import CardSlot, GestureSample
+        data = json.loads(json_str)
+        imported_count = 0
+        if "slots" in data:
+            for s_data in data["slots"]:
+                slot = CardSlot.from_dict(s_data)
+                self.save_card_slot(slot)
+        if "samples" in data:
+            for smp_data in data["samples"]:
+                sample = GestureSample.from_dict(smp_data)
+                self.save_gesture_sample(sample)
+                imported_count += 1
+        return imported_count
+

@@ -1,7 +1,7 @@
 # CURRENT STATE — BINH 13 ANALYZER (macOS)
 
-**Cập nhật lần cuối:** 2026-10-29  
-**Trạng thái kiểm thử:** 130/130 tests PASSED (100%)  
+**Cập nhật lần cuối:** 2026-10-30  
+**Trạng thái kiểm thử:** 144/144 tests PASSED (100%)  
 **Môi trường thực thi:** Python 3.11.17 (`.venv`), macOS Sequoia 15.4.1 (ARM64 Apple Silicon)
 
 ---
@@ -22,29 +22,33 @@
 | **Vision Pipeline** | `template_engine.py` (Topological loop & Rank analysis)    | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
 | **Vision Pipeline** | `card_reference_library.py` (SQLite Ground-truth)          | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
 | **Vision Pipeline** | `roi_manager.py` & `window_manager.py` (3 Windows)         | `VERIFIED` | `test_multi_window.py` (7 tests passed)                |
-| **Database**        | `db.py` & `repository.py` (Sessions, References CRUD)      | `VERIFIED` | `test_database.py` (1 test passed)                     |
+| **Automation**      | `mouse_controller.py` (macOS CoreGraphics native events)   | `VERIFIED` | `test_auto_binh.py` passed                             |
+| **Automation**      | `gesture_selector.py` (Weighted random & Bézier generator) | `VERIFIED` | `test_auto_binh.py` passed                             |
+| **Automation**      | `move_planner.py` (Permutation cycles minimal swaps)       | `VERIFIED` | `test_auto_binh.py` passed                             |
+| **Automation**      | `macro_recorder.py` (Real-time drag capture 60 Hz)         | `VERIFIED` | `test_auto_binh.py` passed                             |
+| **Automation**      | `gesture_manager.py` (SQLite persistence & AutoBinhWorker) | `VERIFIED` | `test_auto_binh.py` passed                             |
+| **Database**        | `db.py` & `repository.py` (Sessions, Slots, Gestures CRUD) | `VERIFIED` | `test_database.py` & `test_auto_binh.py` passed        |
 | **Services**        | `analysis_service.py` & `simulation_service.py`            | `VERIFIED` | `test_integration.py` passed                           |
 | **Services**        | `multi_window_service.py` (Tracking & Hash cache)          | `VERIFIED` | `test_multi_window.py` passed                          |
-| **UI Layer**        | `main_window.py` (6 tabs, tab 6 Bot 3 Cửa Sổ)              | `VERIFIED` | `test_ui.py` passed, khởi chạy app thành công          |
+| **UI Layer**        | `main_window.py` (7 tabs, Tab 7 Tự động binh bài)          | `VERIFIED` | `test_ui.py` passed (7/7 tabs)                         |
+| **UI Layer**        | `gesture_widget.py` (Tab 7 13x13 Matrix, Slot Editor)      | `VERIFIED` | `test_auto_binh.py` passed                             |
+| **UI Layer**        | `multi_window_widget.py` (Nút Auto-Binh 3 cửa sổ)          | `VERIFIED` | `test_multi_window.py` passed                          |
 | **UI Layer**        | `card_edit_dialog.py` (13 nút Rank, 4 Suit, Contradiction) | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
 | **UI Layer**        | `vision_debug_dialog.py` (4 tab chẩn đoán)                 | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
 | **UI Layer**        | `zoomable_viewer.py` (Zoom, Pan, Click Bbox)               | `VERIFIED` | `test_ui.py` passed                                    |
 | **UI Layer**        | `card_reference_manager.py` (Quản lý 52 lá)                | `VERIFIED` | `test_ui.py` passed                                    |
-| **UI Layer**        | `multi_window_widget.py` (Direct capture, auto solve)      | `VERIFIED` | `test_multi_window.py` passed                          |
 
 ---
 
-## 2. NHỮNG GÌ VỪA ĐƯỢC SỬA VÀ HOÀN TẤT GẦN NHẤT
+## 2. NHỮNG GÌ VỪA ĐƯỢC TRIỂN KHAI VÀ HOÀN TẤT GẦN NHẤT
 
-1. **Khắc phục lỗi Tab 6 ("Bot 3 Cửa Sổ") không lấy được ảnh từ cửa sổ, báo "Cửa sổ bị che (Occluded)" vô tận, không hiện lá bài và không hiện gợi ý xếp bài:**
-   - **Chụp ảnh trực tiếp từ macOS Window ID (CGWindowID Direct Capture):** Thêm phương thức `ScreenCapture.capture_window_by_id(window_id)` sử dụng macOS `/usr/sbin/screencapture -l <window_id> -o -x`. Cho phép chụp chính xác cửa sổ game được chỉ định kể cả khi cửa sổ Binh 13 Analyzer hay cửa sổ khác đang đè lên trước mặt.
-   - **Sửa lỗi lệch Window ID và Occlusion:** `WindowROI` trước đây truyền nhầm số thứ tự panel (`idx=1,2,3`) làm `window_id`, khiến thuật toán `compute_occlusion` không tìm thấy cửa sổ trên hệ thống và mặc định coi như bị che 100%. Đã bổ sung trường `cg_window_id` vào `WindowROI` và kết nối trực tiếp với macOS CGWindowID. Đồng thời loại trừ ứng dụng "Binh 13 Analyzer" khỏi danh sách các cửa sổ gây che khuất cửa sổ game.
-   - **Xác nhận tức thì khi chọn cửa sổ trong Dropdown:** Kết nối sự kiện `combo_w1/w2/w3.currentIndexChanged` với hàm `_on_window_selected`. Ngay khi người dùng chọn một cửa sổ trong danh sách, hệ thống chụp ngay cửa sổ đó, cập nhật ảnh vào Viewer, tự động chạy nhận diện lá bài hiển thị trên thanh thumbnail, và giải bài đưa ra gợi ý xếp bài tối ưu (Chi Đầu, Chi Giữa, Chi Cuối).
-   - **Tối ưu danh sách phát hiện cửa sổ macOS:** Cập nhật helper Swift `macos_window_helper.swift` lọc bỏ chính cửa sổ Binh 13 Analyzer và các tiến trình daemon hệ thống không có giao diện.
-   - **Bổ sung `TestDirectWindowCaptureAndSelection` và cập nhật `tests/conftest.py`:** Nâng tổng số test toàn dự án lên **119/119 PASSED (100%)**.
-
-2. **Khắc phục lỗi crash `AttributeError: 'Solver' object has no attribute 'solve_heuristic'` và cảnh báo font:**
-   - **Bổ sung phương thức `solve_heuristic` trong [solver.py](file:///Users/levanquang/tool/app/core/solver.py):** Phương thức ủy quyền cho `solve()` trả về danh sách các thế bài hợp lệ được sắp xếp theo heuristic score tối ưu nhất.
-   - **Bổ sung bọc an toàn `try...except`:** Cả trong [multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py) và [multi_window_service.py](file:///Users/levanquang/tool/app/services/multi_window_service.py) khi giải bài, đảm bảo không bao giờ làm crash tiến trình ứng dụng hay QThread nếu có bất thường.
-   - **Triệt tiêu cảnh báo font Qt `SF Pro Text`:** Thay thế `SF Pro Text` bằng native macOS font alias `.AppleSystemUIFont` trong [styles.py](file:///Users/levanquang/tool/app/ui/styles.py) và [card_widget.py](file:///Users/levanquang/tool/app/ui/components/card_widget.py), tăng tốc độ khởi tạo GUI và loại bỏ 100% cảnh báo font.
-   - **Bổ sung thuộc tính `code` vào class [Card](file:///Users/levanquang/tool/app/core/card.py):** Cho phép truy xuất mã chuỗi thuận tiện (`short_name`).
+1. **Triển khai toàn diện Tab 7 ("7. Tự động binh bài & Cử chỉ") và Bộ điều khiển kéo chuột 156 cặp vị trí bài:**
+   - **Quản lý 13 ô vị trí bài (`CardSlot`):** Chuẩn hóa tọa độ tương đối theo kích thước cửa sổ game $[0.0, 1.0]$. Hỗ trợ hộp thoại `SlotEditorDialog` chỉnh sửa trực quan tọa độ 3 Chi (3 Chi Đầu, 5 Chi Giữa, 5 Chi Cuối) và tự động lưu bền vững vào SQLite `data.db`.
+   - **Quản lý ma trận 156 cặp vị trí có hướng ($13 \times 12$):** Bảng hiển thị 13x13 tương tác trực tiếp (`table_matrix`). Mỗi ô thể hiện số lượng mẫu cử chỉ đã lưu, gắn nhãn xanh `#30D158` nếu đã kiểm tra và xanh lam `#64D2FF` nếu chưa kiểm tra. Hỗ trợ xem chi tiết, test phát lại, đổi tên, thay đổi trọng số, nhân bản và xóa mẫu.
+   - **Bộ chọn mẫu ngẫu nhiên (`GestureSelector`):** Hỗ trợ chọn ngẫu nhiên có trọng số (`weighted random`), lọc chỉ dùng mẫu đã kiểm tra, tránh lặp lại mẫu liên tiếp và cấu hình tốc độ kéo chuột / thời gian nghỉ giữa các lượt.
+   - **Tự động sinh 156 đường cong Bézier tự nhiên:** Hàm `generate_natural_bezier_sample` sinh đường cong mượt mà theo thuật toán Cubic Bézier kèm gia tốc tự nhiên (Cubic ease-in-out) và độ rung vi mô mô phỏng tay người, giúp người dùng lập tức có đủ 156 mẫu chuẩn ngay lần đầu mở ứng dụng.
+   - **Ghi macro chuột thực tế (`MacroRecorder`):** Bắt sự kiện chuột qua `CGEventSourceButtonState` và `QCursor.pos()` ở tần số 60 Hz, ghi nhận đường đi thực tế khi người dùng kéo thả trên cửa sổ game và chuẩn hóa về tọa độ tương đối.
+   - **Lập kế hoạch hoán đổi tối ưu (`MovePlanner`):** Phân tích 13 quân bài hiện tại trên các ô bàn chơi so với thế bài tối ưu được giải bởi `Solver` $\rightarrow$ phân rã thành các chu trình hoán đổi tối thiểu (Disjoint Permutation Cycles), đảm bảo đưa 13 lá về đúng vị trí với số lượt kéo chuột ít nhất.
+   - **Điều khiển chuột macOS native (`MouseController`):** Sử dụng `CoreGraphics` CGEvents qua `ctypes`, chuyển đổi tọa độ tương đối sang tọa độ màn hình thực tế, tích hợp cơ chế ngắt an toàn khẩn cấp (Failsafe) khi chuột di chuyển vào góc $(0, 0)$.
+   - **Tích hợp Tab 6 ("Bot 3 Cửa Sổ"):** Bổ sung nút bấm `"⚡ Tự Động Binh Bài (Auto-Binh)"` trên từng panel cửa sổ. Khi đã phát hiện đủ 13 lá và có thế bài tối ưu, người dùng bấm nút này để hệ thống tự động kéo xếp bài trên cửa sổ game chạy ngầm trên `QThread` (`AutoBinhWorker`) mà không gây đơ lag giao diện.
+   - **Kiểm thử tự động toàn diện:** Viết mới file `tests/test_auto_binh.py` gồm 8 test case kiểm tra Model, Database, MovePlanner, Selector, Bézier, MouseController và UI. Nâng tổng số test toàn dự án lên **138/138 PASSED (100%)**.

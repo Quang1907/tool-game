@@ -83,6 +83,81 @@ class WindowManager:
                 pass
         return []
 
+    def get_window_bounds(self, window_id: int) -> Optional[Tuple[int, int, int, int]]:
+        """Queries the live, real-time bounds (x, y, w, h) of a specific window by its CGWindowID."""
+        if not window_id:
+            return None
+        all_wins = self.list_windows()
+        for w in all_wins:
+            if w.window_id == window_id:
+                return w.bounds
+        return None
+
+    def get_window_by_id(self, window_id: int) -> Optional[WindowItem]:
+        """Queries the live WindowItem of a specific window by its CGWindowID."""
+        if not window_id:
+            return None
+        all_wins = self.list_windows()
+        for w in all_wins:
+            if w.window_id == window_id:
+                return w
+        return None
+
+    def activate_window(self, target: WindowItem | int | str, title: str = "") -> bool:
+        """Brings the target application and window to the foreground on macOS using AppleScript.
+        target can be a WindowItem, a CGWindowID (int), or an owner application name (str).
+        """
+        owner_name = ""
+        win_title = title
+        if isinstance(target, WindowItem):
+            owner_name = target.owner_name
+            win_title = target.title or title
+        elif isinstance(target, int):
+            item = self.get_window_by_id(target)
+            if item:
+                owner_name = item.owner_name
+                win_title = item.title or title
+        elif isinstance(target, str):
+            owner_name = target
+
+        if not owner_name:
+            return False
+
+        clean_owner = owner_name.replace('"', '\\"')
+        clean_title = (win_title[:40] if win_title else "").replace('"', '\\"').strip()
+
+        if clean_title:
+            script = f'''
+            tell application "{clean_owner}" to activate
+            tell application "System Events"
+                tell process "{clean_owner}"
+                    set frontmost to true
+                    try
+                        perform action "AXRaise" of (first window whose name contains "{clean_title}")
+                    end try
+                end tell
+            end tell
+            '''
+        else:
+            script = f'''
+            tell application "{clean_owner}" to activate
+            tell application "System Events"
+                tell process "{clean_owner}"
+                    set frontmost to true
+                end tell
+            end tell
+            '''
+        try:
+            res = subprocess.run(["osascript", "-e", script], capture_output=True, timeout=1.5)
+            return res.returncode == 0
+        except Exception:
+            try:
+                fallback = f'tell application "{clean_owner}" to activate'
+                res = subprocess.run(["osascript", "-e", fallback], capture_output=True, timeout=1.0)
+                return res.returncode == 0
+            except Exception:
+                return False
+
     def compute_occlusion(self, target_window: WindowItem, all_windows: List[WindowItem]) -> WindowItem:
         """Calculates if target_window is occluded by higher Z-order windows."""
         tx, ty, tw, th = target_window.bounds

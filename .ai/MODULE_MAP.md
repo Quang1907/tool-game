@@ -74,7 +74,21 @@ Tài liệu này là bản đồ điều hướng chi tiết giúp AI xác đị
 
 ---
 
-## 6. HƯỚNG DẪN TRUY XUẤT THEO NHIỆM VỤ (TASK-BASED NAVIGATION)
+## 6. PHÂN HỆ TỰ ĐỘNG HÓA & QUẢN LÝ CỬ CHỈ (`app/automation/`)
+
+| Tiêu chí | Chi tiết |
+|---|---|
+| **Vai trò** | Quản lý 13 ô bài ($[0.0, 1.0]$ tương đối), lưu trữ và điều phối cử chỉ kéo thả ($156$ cặp có hướng), bộ chọn mẫu ngẫu nhiên (weighted random), bộ sinh đường cong Cubic Bézier tự nhiên, lập lịch hoán đổi tối thiểu (Min Swaps MovePlanner), ghi macro trực tiếp 60Hz, điều khiển chuột macOS native `CoreGraphics` qua `ctypes` và worker chạy ngầm trên `QThread`. |
+| **Files** | `gesture_models.py`, `mouse_controller.py`, `gesture_selector.py`, `move_planner.py`, `macro_recorder.py`, `gesture_manager.py`. |
+| **Dependencies** | Thư viện chuẩn Python (`ctypes`, `dataclasses`, `json`, `math`, `random`, `uuid`), `PySide6.QtCore` (`QThread`, `Signal`, `QObject`), `PySide6.QtGui` (`QCursor`), `app.core.card`, `app.database`. |
+| **Public API chính** | - `MouseController.drag_and_drop_relative(sample, win_bounds, speed_factor)`<br>- `GestureSelector.select_sample(from_slot, to_slot) -> GestureSample`<br>- `GestureSelector.generate_natural_bezier_sample(...) -> GestureSample`<br>- `MovePlanner.plan_moves(current_cards, target_arrangement) -> MovePlan`<br>- `MacroRecorder.start_recording(...) / stop_recording() -> GestureSample`<br>- `GestureManager.execute_auto_binh(...)`<br>- `AutoBinhWorker(manager, current_cards, solution, win_bounds, config)` |
+| **Tài liệu liên quan** | `.ai/state/ACTIVE_TASK.md`, `CHANGELOG.md`. |
+| **Tests liên quan** | `tests/test_auto_binh.py`. |
+| **Điều cần tránh** | - **Tuyệt đối không chạy kéo chuột hay mô phỏng trên Main GUI Thread** (bắt buộc dùng `AutoBinhWorker(QThread)`).<br>- Không dùng tọa độ pixel tuyệt đối để lưu cử chỉ (phải dùng tọa độ tương đối $[0.0, 1.0]$ theo kích thước cửa sổ game).<br>- Luôn kiểm tra chốt an toàn (failsafe khi chuột chạm góc $(0, 0)$). |
+
+---
+
+## 7. HƯỚNG DẪN TRUY XUẤT THEO NHIỆM VỤ (TASK-BASED NAVIGATION)
 
 | Nếu nhiệm vụ của bạn liên quan đến... | Hãy đọc các file này trước: | Và chạy test này để kiểm tra: |
 |---|---|---|
@@ -84,3 +98,5 @@ Tài liệu này là bản đồ điều hướng chi tiết giúp AI xác đị
 | Sửa nhận diện 3 cửa sổ bàn chơi, ROI, Retina 2x | `app/vision/roi_manager.py`<br>`app/services/multi_window_service.py` | `pytest tests/test_multi_window.py -v` |
 | Sửa thuật toán xếp chi, luật Mậu Binh, kiểm tra Foul | `app/core/evaluator.py`<br>`app/core/solver.py`<br>`app/core/rules.py` | `pytest tests/test_evaluator.py tests/test_solver.py -v` |
 | Sửa tính toán EV, Monte Carlo, tốc độ mô phỏng | `app/core/simulator.py`<br>`app/core/ev_optimizer.py` | `pytest tests/test_simulator.py -v` |
+| Sửa cử chỉ kéo chuột, ghi macro, sinh Bézier, tự động binh bài | `app/automation/gesture_manager.py`<br>`app/automation/move_planner.py`<br>`app/ui/components/gesture_widget.py` | `pytest tests/test_auto_binh.py -v` |
+

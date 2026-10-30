@@ -110,4 +110,29 @@ class DatabaseManager:
                 );
                 CREATE INDEX IF NOT EXISTS idx_card_references_code ON card_references(card_code);
                 CREATE INDEX IF NOT EXISTS idx_card_references_hash ON card_references(image_hash);
+
+                CREATE TABLE IF NOT EXISTS card_slots (
+                    slot_number INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    rel_x REAL NOT NULL,
+                    rel_y REAL NOT NULL,
+                    group_name TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS gesture_samples (
+                    id TEXT PRIMARY KEY,
+                    source_slot INTEGER NOT NULL,
+                    target_slot INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    points_json TEXT NOT NULL,
+                    mouse_down_delay_ms INTEGER DEFAULT 80,
+                    mouse_up_delay_ms INTEGER DEFAULT 80,
+                    total_duration_ms INTEGER NOT NULL,
+                    is_verified BOOLEAN DEFAULT 0,
+                    weight REAL DEFAULT 1.0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    metadata_json TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_gesture_source_target ON gesture_samples(source_slot, target_slot);
             """)

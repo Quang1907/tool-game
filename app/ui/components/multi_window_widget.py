@@ -1,7 +1,7 @@
 """Multi-Window Bot Widget: 3-window simultaneous game monitor and analyzer on macOS."""
 
 from __future__ import annotations
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import cv2
 import numpy as np
 from PySide6.QtCore import Qt, QThread, Signal
@@ -44,9 +44,14 @@ from app.vision.window_manager import WindowItem, WindowManager
 class SingleWindowPanel(QGroupBox):
     """Panel displaying live camera ROI, detected cards, and optimal 3-chi arrangement for one game window."""
 
+    auto_binh_clicked = Signal(int)
+
     def __init__(self, window_idx: int, parent: Optional[QWidget] = None) -> None:
         super().__init__(f"Cửa sổ #{window_idx}", parent)
         self.window_idx = window_idx
+        self.last_partition: Optional[HandArrangement] = None
+        self.last_detected_cards: List[Any] = []
+        self.last_frame: Optional[np.ndarray] = None
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -117,8 +122,17 @@ class SingleWindowPanel(QGroupBox):
         opp_box_layout.addWidget(self.lbl_opp_breakdown)
         layout.addWidget(self.box_vs_opp)
 
+        # Auto-Binh Action Button
+        self.btn_auto_binh = QPushButton("⚡ Tự Động Binh Bài (Auto-Binh)", objectName="PrimaryBtn")
+        self.btn_auto_binh.setStyleSheet("background-color: #30D158; color: white; font-weight: bold; border-radius: 6px; padding: 6px 12px;")
+        self.btn_auto_binh.setEnabled(False)
+        self.btn_auto_binh.setToolTip("Tự động dùng chuột kéo xếp 13 lá bài theo thế bài tối ưu")
+        self.btn_auto_binh.clicked.connect(lambda: self.auto_binh_clicked.emit(self.window_idx))
+        layout.addWidget(self.btn_auto_binh)
+
     def update_state(self, state: WindowCardState, crop_img: Optional[np.ndarray]) -> None:
         """Updates live preview and card list."""
+        self.last_detected_cards = list(state.detected_cards)
         if state.status == "OCCLUDED":
             self.lbl_status.setText("⚠️ Cửa sổ bị che (Occluded)")
             self.lbl_status.setStyleSheet("color: #FF453A; font-weight: 600;")
@@ -136,6 +150,7 @@ class SingleWindowPanel(QGroupBox):
             self.lbl_status.setStyleSheet("color: #8E8E93; font-weight: 600;")
 
         if crop_img is not None and crop_img.size > 0:
+            self.last_frame = crop_img
             self.viewer.set_image(crop_img, state.detected_cards)
 
         # Update card thumbnails
@@ -154,6 +169,9 @@ class SingleWindowPanel(QGroupBox):
 
     def update_solution(self, partition: HandArrangement) -> None:
         """Displays solved 3-chi hand breakdown."""
+        self.last_partition = partition
+        self.btn_auto_binh.setEnabled(partition is not None and len(self.last_detected_cards) == 13)
+
         f_names = " ".join(c.unicode_name for c in partition.front)
         m_names = " ".join(c.unicode_name for c in partition.middle)
         b_names = " ".join(c.unicode_name for c in partition.back)
@@ -308,6 +326,7 @@ class MultiWindowWidget(QWidget):
         detector: Optional[CardDetector] = None,
         recognizer: Optional[CardRecognizer] = None,
         reference_library: Optional[CardReferenceLibrary] = None,
+        gesture_manager: Optional[Any] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -315,6 +334,8 @@ class MultiWindowWidget(QWidget):
         self.reference_library = reference_library or (recognizer.reference_library if recognizer else CardReferenceLibrary())
         self.detector = detector or CardDetector()
         self.recognizer = recognizer or CardRecognizer(reference_library=self.reference_library)
+        from app.automation.gesture_manager import GestureManager
+        self.gesture_manager = gesture_manager or GestureManager()
         self.solver = Solver()
         self.table_analyzer = CollaborativeTableAnalyzer()
         self.window_cards: Dict[int, List[Card]] = {1: [], 2: [], 3: []}
@@ -322,6 +343,7 @@ class MultiWindowWidget(QWidget):
         self._thread: Optional[QThread] = None
         self._worker: Optional[MultiWindowWorker] = None
         self.discovered_windows: List[WindowItem] = []
+        self._auto_binh_workers: Dict[int, Any] = {}
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -377,6 +399,7 @@ class MultiWindowWidget(QWidget):
         self.panels: Dict[int, SingleWindowPanel] = {}
         for i in range(1, 4):
             panel = SingleWindowPanel(window_idx=i, parent=self)
+            panel.auto_binh_clicked.connect(self._on_auto_binh_clicked)
             self.panels[i] = panel
             grid.addWidget(panel, 0, i - 1)
 
@@ -583,3 +606,107 @@ class MultiWindowWidget(QWidget):
             # Only update standard solution if not in active counter-adapted mode
             if not hasattr(panel, "lbl_opp_outcome") or "BẮT SẬP" not in panel.lbl_opp_outcome.text():
                 panel.update_solution(solution)
+
+    def _on_auto_binh_clicked(self, window_idx: int) -> None:
+        """Executes auto-binh arrangement moves on the selected game window using GestureManager."""
+        panel = self.panels.get(window_idx)
+        if not panel or not panel.last_partition or not panel.last_detected_cards:
+            QMessageBox.warning(self, "Chưa đủ dữ liệu", "Cần phát hiện đủ 13 lá bài và có kết quả xếp bài để tự động binh!")
+            return
+
+        if len(panel.last_detected_cards) < 13:
+            QMessageBox.warning(self, "Chưa đủ 13 lá", f"Cửa sổ #{window_idx} mới nhận diện được {len(panel.last_detected_cards)}/13 lá!")
+            return
+
+        # 1. Map detected cards to slots 1..13
+        # Sort detected cards vertically into 3 front (top), 5 middle, 5 back (bottom), then horizontally left to right
+        sorted_dets = sorted(panel.last_detected_cards, key=lambda d: d.bbox[1])
+        front_dets = sorted(sorted_dets[0:3], key=lambda d: d.bbox[0])
+        mid_dets = sorted(sorted_dets[3:8], key=lambda d: d.bbox[0])
+        back_dets = sorted(sorted_dets[8:13], key=lambda d: d.bbox[0])
+
+        current_slots: Dict[int, Card] = {}
+        for idx, d in enumerate(front_dets, start=1):
+            current_slots[idx] = d.card
+        for idx, d in enumerate(mid_dets, start=4):
+            current_slots[idx] = d.card
+        for idx, d in enumerate(back_dets, start=9):
+            current_slots[idx] = d.card
+
+        # 2. Plan minimal swaps
+        from app.automation.move_planner import MovePlanner
+        plan = MovePlanner.plan_moves(current_slots, panel.last_partition)
+
+        if plan.is_already_optimal or plan.total_swaps == 0:
+            QMessageBox.information(self, "Đã tối ưu", "Bài trên bàn chơi đã được xếp đúng theo phương án tối ưu, không cần di chuyển thêm!")
+            return
+
+        # 3. Determine real-time live window bounds and activate game window
+        combo = getattr(self, f"combo_w{window_idx}", None)
+        selected_id = combo.currentData() if combo else None
+        if selected_id:
+            self.window_manager.activate_window(selected_id)
+            time.sleep(0.12)
+
+        live_bounds = self.window_manager.get_window_bounds(selected_id) if selected_id else None
+        if live_bounds:
+            win_bounds = live_bounds
+        else:
+            win_item = next((w for w in self.discovered_windows if w.window_id == selected_id), None)
+            if win_item and isinstance(win_item.bounds, (tuple, list)) and len(win_item.bounds) == 4:
+                win_bounds = (int(win_item.bounds[0]), int(win_item.bounds[1]), int(win_item.bounds[2]), int(win_item.bounds[3]))
+            else:
+                win_bounds = (100, 100, 1200, 800)
+
+        # 4. Extract real-time card slot coordinates from detected card bounding boxes
+        frame_w = 0
+        frame_h = 0
+        if hasattr(panel, "last_frame") and panel.last_frame is not None and panel.last_frame.size > 0:
+            frame_h, frame_w = panel.last_frame.shape[0], panel.last_frame.shape[1]
+        elif hasattr(panel.viewer, "_current_image") and panel.viewer._current_image is not None:
+            frame_h, frame_w = panel.viewer._current_image.shape[0], panel.viewer._current_image.shape[1]
+
+        live_slot_coords: Dict[int, Tuple[float, float]] = {}
+        if frame_w > 0 and frame_h > 0:
+            for idx, d in enumerate(front_dets, start=1):
+                bx, by, bw, bh = d.bbox
+                live_slot_coords[idx] = (round((bx + bw / 2.0) / frame_w, 4), round((by + bh / 2.0) / frame_h, 4))
+            for idx, d in enumerate(mid_dets, start=4):
+                bx, by, bw, bh = d.bbox
+                live_slot_coords[idx] = (round((bx + bw / 2.0) / frame_w, 4), round((by + bh / 2.0) / frame_h, 4))
+            for idx, d in enumerate(back_dets, start=9):
+                bx, by, bw, bh = d.bbox
+                live_slot_coords[idx] = (round((bx + bw / 2.0) / frame_w, 4), round((by + bh / 2.0) / frame_h, 4))
+
+        # 5. Run AutoBinhWorker on QThread with dynamic live trajectory adaptation
+        from app.automation.gesture_manager import AutoBinhWorker
+        panel.btn_auto_binh.setEnabled(False)
+        panel.btn_auto_binh.setText("Đang tự động binh bài...")
+
+        worker = AutoBinhWorker(
+            manager=self.gesture_manager,
+            plan=plan,
+            win_bounds=win_bounds,
+            config=self.gesture_manager.config,
+            live_slot_coords=live_slot_coords if live_slot_coords else None,
+            parent=self,
+        )
+        self._auto_binh_workers[window_idx] = worker
+
+        def on_step(idx: int, total: int, desc: str) -> None:
+            panel.lbl_status.setText(f"⚡ Binh bài: {idx}/{total} - {desc}")
+            panel.lbl_status.setStyleSheet("color: #64D2FF; font-weight: bold;")
+
+        def on_finished(success: bool, msg: str) -> None:
+            panel.btn_auto_binh.setEnabled(True)
+            panel.btn_auto_binh.setText("⚡ Tự Động Binh Bài")
+            panel.lbl_status.setText(msg)
+            panel.lbl_status.setStyleSheet("color: #30D158; font-weight: bold;" if success else "color: #FF453A; font-weight: bold;")
+            if success:
+                QMessageBox.information(self, "Tự Động Binh Bài Hoàn Tất", msg)
+            else:
+                QMessageBox.warning(self, "Tự Động Binh Bài", msg)
+
+        worker.step_started.connect(on_step)
+        worker.finished_result.connect(on_finished)
+        worker.start()

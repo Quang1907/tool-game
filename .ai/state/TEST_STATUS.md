@@ -1,9 +1,9 @@
 # TEST STATUS & VERIFICATION REPORT — BINH 13 ANALYZER
 
-**Thời điểm kiểm tra gần nhất:** 2026-10-29 09:31:23 +09:00  
+**Thời điểm kiểm tra gần nhất:** 2026-10-30 09:44:00 +09:00  
 **Lệnh thực thi:** `.venv/bin/pytest tests/`  
-**Kết quả chung:** **130 / 130 tests PASSED (100%)**  
-**Thời gian chạy:** 25.34 giây  
+**Kết quả chung:** **144 / 144 tests PASSED (100%)**  
+**Thời gian chạy:** 32.51 giây  
 **Nền tảng:** macOS Sequoia 15.4.1 (ARM64 Apple Silicon) | Python 3.11.17
 
 ---
@@ -21,9 +21,10 @@
 | `tests/test_database.py`                     |    1    | **1 PASSED**  | Vòng đời Session SQLite, CRUD lịch sử ván bài                                           |
 | `tests/test_integration.py`                  |    1    | **1 PASSED**  | Luồng tích hợp End-to-End từ bài nạp đến giải và mô phỏng                               |
 | `tests/test_multi_window.py`                 |    9    | **9 PASSED**  | Quản lý 3 cửa sổ bàn chơi, Retina 2x crop, CGWindowID direct capture, selection preview |
-| `tests/test_ui.py`                           |    5    | **5 PASSED**  | MainWindow, CardEditDialog, CardReferenceManager, ZoomableImageViewer                   |
+| `tests/test_ui.py`                           |    5    | **5 PASSED**  | MainWindow (7 tabs), CardEditDialog, CardReferenceManager, ZoomableImageViewer         |
 | `tests/test_vision.py`                       |   28    | **28 PASSED** | Xử lý ảnh, template matching, NMS, tách bài xòe, 9 mẫu bài thực tế                      |
 | `tests/test_card_detection_and_reference.py` |   42    | **42 PASSED** | Bộ test bắt buộc, 6♥/5♥, màu Đen/Đỏ, cô lập J/Q/K, chống ghosting 2♠, 2♠ vs 2♣, subpixel shift |
+| `tests/test_auto_binh.py`                    |   14    | **14 PASSED** | Slot models, 156-pair CRUD, MovePlanner, Bézier, Visual 13-board, Wizard, Trajectory Warp, Window Activate, Shrunk Bounds Invariance |
 
 ---
 
