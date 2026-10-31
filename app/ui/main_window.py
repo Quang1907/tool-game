@@ -228,3 +228,22 @@ class MainWindow(QMainWindow):
     def _on_simulation_arrangement_selected(self, arrangement: HandArrangement) -> None:
         # Display selected arrangement in SolverWidget
         self.tab_solver.set_arrangements([arrangement])
+
+    def closeEvent(self, event) -> None:
+        """Safely stops all worker threads across tabs before closing main window."""
+        if self._sim_thread and self._sim_thread.isRunning():
+            if self._sim_worker:
+                self._sim_worker.cancel()
+            self._sim_thread.quit()
+            self._sim_thread.wait(600)
+
+        if hasattr(self, "tab_multi_window") and self.tab_multi_window:
+            self.tab_multi_window._stop_bot()
+            for worker in list(self.tab_multi_window._auto_binh_workers.values()):
+                if worker and worker.isRunning():
+                    worker.stop()
+                    worker.wait(600)
+            self.tab_multi_window._auto_binh_workers.clear()
+
+        super().closeEvent(event)
+

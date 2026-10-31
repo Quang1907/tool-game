@@ -37,8 +37,9 @@ class CardStateManager:
     def compute_position_invariant_hash(detected_cards: List[DetectedCard]) -> str:
         """Computes SHA-256 hash from sorted card codes, invariant to spatial card positions."""
         valid_codes = sorted([
-            d.card_code for d in detected_cards
-            if d.card is not None and d.card_code != "??"
+            str(getattr(d, "card_code", d.card.short_name if d.card else ""))
+            for d in detected_cards
+            if d.card is not None and str(getattr(d, "card_code", d.card.short_name if d.card else "")) not in ("", "??")
         ])
         if not valid_codes:
             return ""

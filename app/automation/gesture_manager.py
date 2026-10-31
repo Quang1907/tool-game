@@ -296,20 +296,35 @@ class AutoBinhWorker(QThread):
         self.live_slot_coords = live_slot_coords
         self._is_aborted = False
 
-        self.manager.action_started.connect(self.step_started.emit)
-        self.manager.action_completed.connect(self.step_completed.emit)
-        self.manager.execution_finished.connect(self.finished_result.emit)
+        self.manager.action_started.connect(self.step_started)
+        self.manager.action_completed.connect(self.step_completed)
+        self.manager.execution_finished.connect(self.finished_result)
 
     def stop(self) -> None:
         self._is_aborted = True
         self.manager.mouse.request_stop()
 
     def run(self) -> None:
-        self.manager.execute_move_plan(
-            plan=self.plan,
-            win_bounds=self.win_bounds,
-            config=self.config,
-            stop_check=lambda: self._is_aborted,
-            live_slot_coords=self.live_slot_coords,
-        )
+        try:
+            self.manager.execute_move_plan(
+                plan=self.plan,
+                win_bounds=self.win_bounds,
+                config=self.config,
+                stop_check=lambda: self._is_aborted,
+                live_slot_coords=self.live_slot_coords,
+            )
+        finally:
+            try:
+                self.manager.action_started.disconnect(self.step_started)
+            except Exception:
+                pass
+            try:
+                self.manager.action_completed.disconnect(self.step_completed)
+            except Exception:
+                pass
+            try:
+                self.manager.execution_finished.disconnect(self.finished_result)
+            except Exception:
+                pass
+
 

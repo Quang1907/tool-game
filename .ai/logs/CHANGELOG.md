@@ -4,6 +4,63 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi chép t�
 
 ---
 
+## [1.3.6] — 2026-10-31
+
+### Added & Enhanced
+
+- **Xác định ván bài mới tự động (New Hand/Round Detection) ([multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py), [card_state.py](file:///Users/levanquang/tool/app/vision/card_state.py)):**
+  - **Nhận diện ván bài mới:** Tự động phát hiện khi bộ 13 lá bài mới xuất hiện trên bàn chơi bằng cách so sánh hash nội dung lá bài bất biến vị trí (`CardStateManager.compute_position_invariant_hash`) với hash của ván bài đã binh gần nhất (`last_binned_hashes[window_idx]`).
+  - **Lọc chống chớp nháy (Debounce 2 frames):** Yêu cầu 13 lá mới ổn định qua ít nhất 2 frame quét liên tiếp (~300ms) để loại bỏ hiện tượng animation bay bài khi chia dở, đảm bảo phát hiện chính xác ván bài mới trước khi xử lý.
+  - **Nhận diện kết thúc ván cũ / dọn bàn:** Khi số lá bài trên bàn giảm xuống $< 8$ lá (do thu bài / tính tiền so chi), hệ thống tự động nhận biết ván cũ đã kết thúc và chuyển trạng thái sang `"⏳ Ván cũ đã xong — Đang chờ chia bài ván mới..."`.
+  - **Huy hiệu hiển thị ván bài trực quan (`lbl_round_badge`):** Bổ sung huy hiệu ván bài trên header của từng bàn chơi:
+    - `"Ván #N (MỚI)"`: Khi vừa phát hiện đủ 13 lá của ván mới (viền xanh lam phát sáng).
+    - `"Ván #N (Đã binh)"`: Sau khi hệ thống đã hoàn tất xếp bài cho ván đó (nền xanh lục).
+- **Chế độ Tự Động Binh Bài Liên Tục (Continuous Auto-Loop Mode):**
+  - **Nút bật/tắt trên thanh công cụ Tab 6:** Nút `"🔄 Tự động binh liên tục: ĐANG BẬT / TẮT"` cho phép hệ thống tự vận hành 24/7 mà không cần người dùng phải bấm nút mỗi ván.
+  - **Hàng đợi điều phối luân phiên (`auto_loop_queue`):** Khi nhiều bàn cùng xuất hiện ván bài mới, hệ thống tự động xếp theo hàng đợi bất đồng bộ (`QTimer.singleShot(400, ...)`), tránh xung đột chuột và luân phiên tự động xếp xong bàn này thì chuyển sang bàn tiếp theo.
+  - **Bộ đếm ván bài thành công (`lbl_loop_counter`):** Hiển thị trực tiếp tổng số ván bài hệ thống đã tự động binh thành công (`"Đã binh: X ván"`).
+  - **Bộ nhớ đệm lời giải (`_solution_cache`) ([multi_window_service.py](file:///Users/levanquang/tool/app/services/multi_window_service.py)):** Cache kết quả giải thế bài tối ưu theo hash quân bài, giảm tải CPU tối đa khi chạy quét liên tục 24/7.
+- **Kiểm thử tự động:**
+  - Bổ sung 2 test case mới trong `tests/test_auto_binh.py`:
+    - `test_new_round_detection_and_badge_update`: Kiểm tra chu kỳ phát hiện ván mới, chuyển đổi ván cũ dọn bàn và tăng số thứ tự ván.
+    - `test_continuous_auto_loop_mode`: Kiểm tra cơ chế tự động xếp bài khi bật chế độ Auto-Loop mà không cần click nút, không bị lặp lại trên cùng một ván bài.
+  - Toàn bộ test suite đạt **149/149 tests PASSED (100%)**.
+
+---
+
+## [1.3.5] — 2026-10-31
+
+### Fixed
+
+- **Khắc phục lỗi `NameError: name 'time' is not defined` ([multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py)):**
+  - Thêm `import time` còn thiếu ở đầu module. Lỗi xuất hiện khi người dùng bấm nút *"⚡ Tự Động Binh Bài"* trên Tab 6 (tại vị trí chờ kích hoạt cửa sổ `time.sleep(0.18)`).
+- **Khắc phục lỗi `QThread: Destroyed while thread is still running` và memory cleanup:**
+  - Bổ sung `closeEvent` cho cả `MultiWindowWidget` và `MainWindow` để ngắt an toàn tất cả background worker (`_stop_bot`, `_auto_binh_workers`, `_sim_worker`) trước khi thoát ứng dụng.
+  - Tối ưu cơ chế kết nối tín hiệu trong `AutoBinhWorker` ([gesture_manager.py](file:///Users/levanquang/tool/app/automation/gesture_manager.py)): tự động ngắt kết nối tín hiệu tạm thời (`disconnect`) trong khối `finally` của hàm `run()` để tránh tình trạng tích tụ listener và xung đột luồng khi thực hiện binh bài nhiều lần.
+  - Ngăn ngừa việc người dùng nhấn lặp lại nút Binh Bài khi worker cũ trên cùng bàn chơi đang chạy.
+- **Kiểm thử tự động:**
+  - Bổ sung test case `test_start_auto_binh_uses_imported_time_and_cleans_up` trong `tests/test_auto_binh.py`.
+  - Toàn bộ test suite đạt **147/147 tests PASSED (100%)**.
+
+---
+
+## [1.3.4] — 2026-10-30
+
+### Added & Enhanced
+
+- **Di chuyển chuột mượt mà và Click chọn bài trước khi kéo thả ([mouse_controller.py](file:///Users/levanquang/tool/app/automation/mouse_controller.py)):**
+  - **Di chuyển chuột tự nhiên (`smooth_move_to`):** Thay vì dịch chuyển tức thời (teleport) làm giật trỏ chuột, hệ thống lấy vị trí con trỏ chuột hiện tại của người dùng (từ vị trí vừa bấm nút hoặc vị trí thả của lá bài trước) và di chuyển mượt mà dọc theo đường cong gia tốc ease-in-out đến vị trí con bài cần kéo đầu tiên.
+  - **Nhấp chọn lá bài vào màn hình (`click_to_select`):** Khi chuột đến tâm con bài nguồn, hệ thống thực hiện một cú nhấp (mouse down -> 45ms hold -> mouse up) để kích hoạt focus cửa sổ game và chọn con bài đó trên giao diện web/client, sau đó tạm nghỉ 80ms tự nhiên rồi mới thực hiện chuỗi kéo thả (drag & drop) sang vị trí đích.
+- **Tự động luân phiên xếp bài trên cả 3 cửa sổ / 3 tab game ([multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py)):**
+  - **Nút "⚡ Binh bài cả 3 bàn (Luân phiên)":** Bổ sung nút thao tác tổng trên thanh công cụ Bot 3 Cửa Sổ. Hệ thống tự động xếp bài lần lượt qua các bàn chơi: Kích hoạt Bàn 1 -> Tự động xếp Bàn 1 -> Nghỉ 400ms -> Chuyển và kích hoạt Bàn 2 -> Tự động xếp Bàn 2 -> Nghỉ 400ms -> Chuyển và kích hoạt Bàn 3 -> Tự động xếp Bàn 3.
+- **Loại bỏ hộp thoại thông báo hoàn thành (Suppress Completion Dialog):**
+  - Bỏ hoàn toàn các hộp thoại popup `QMessageBox.information` sau khi binh bài xong theo đúng yêu cầu người dùng ("thông báo thực hiện xong qua mấy bước không cần hiển thị"). Tiến trình và trạng thái hoàn thành được cập nhật mượt mà trực tiếp trên thanh trạng thái của từng panel mà không gây gián đoạn hay phải bấm OK.
+- **Kiểm thử tự động:**
+  - Bổ sung 2 test case mới kiểm tra `smooth_move_to`, `click_to_select` và luân phiên 3 cửa sổ không popup trong [test_auto_binh.py](file:///Users/levanquang/tool/tests/test_auto_binh.py).
+  - 100% test suite đạt **146/146 tests PASSED**.
+
+---
+
 ## [1.3.3] — 2026-10-30
 
 ### Added & Enhanced

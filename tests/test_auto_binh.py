@@ -448,5 +448,272 @@ class TestGestureWidgetUI:
             assert abs(s.points[0].rel_y - expected_ry) < 1e-4
             assert len(s.points) >= 3
 
+    def test_smooth_move_and_card_selection_click(self, qapp):
+        from unittest.mock import patch, MagicMock
+        from PySide6.QtCore import QPoint
+        from app.automation.mouse_controller import MouseController
+        from app.automation.gesture_models import GesturePoint
+
+        mouse = MouseController()
+        moved_coords = []
+        clicked_coords = []
+
+        with patch.object(mouse, "move_to", side_effect=lambda x, y: moved_coords.append((x, y))), \
+             patch.object(mouse, "click", side_effect=lambda x, y, delay_ms: clicked_coords.append((x, y))), \
+             patch.object(mouse, "mouse_down"), \
+             patch.object(mouse, "mouse_drag"), \
+             patch.object(mouse, "mouse_up"), \
+             patch("PySide6.QtGui.QCursor.pos", return_value=QPoint(100, 100)):
+
+            # Smooth move from (100, 100) to (400, 500)
+            ok = mouse.smooth_move_to(400.0, 500.0, duration_sec=0.05, steps=10)
+            assert ok is True
+            assert len(moved_coords) >= 10
+            # Final point should match target
+            assert moved_coords[-1] == (400.0, 500.0)
+
+            # Test play_trajectory with click_to_select
+            pts = [
+                GesturePoint(0.2, 0.2, 0),
+                GesturePoint(0.5, 0.5, 50),
+            ]
+            win_bounds = (0, 0, 1000, 1000)
+            # Starting point at rel (0.2, 0.2) on bounds (0, 0, 1000, 1000) is (200, 200)
+            res = mouse.play_trajectory(pts, win_bounds=win_bounds, click_to_select=True)
+            assert res is True
+            # Verification: card was clicked to focus/select before dragging
+            assert len(clicked_coords) == 1
+            assert clicked_coords[0] == (200.0, 200.0)
+
+    def test_multi_window_alternating_execution_and_no_popup(self, qapp, temp_db):
+        from unittest.mock import patch, MagicMock
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+        from app.core.card import Card, Rank, Suit
+        from app.core.solver import HandArrangement
+        from app.core.evaluator import HandEvaluation, HandCategory
+        from app.vision.card_detector import CardDetection
+
+        widget = MultiWindowWidget()
+
+        # Mock partition and 13 detected cards for window 1 and window 2
+        cards = [Card(Rank(r), Suit.SPADES) for r in range(2, 15)]
+        f = cards[0:3]
+        m = cards[3:8]
+        b = cards[8:13]
+        eval_f = HandEvaluation(HandCategory.HIGH_CARD, (4, 3, 2), tuple(f), "High", is_front_hand=True)
+        eval_m = HandEvaluation(HandCategory.HIGH_CARD, (9, 8, 7, 6, 5), tuple(m), "High")
+        eval_b = HandEvaluation(HandCategory.HIGH_CARD, (14, 13, 12, 11, 10), tuple(b), "High")
+        partition = HandArrangement(tuple(f), tuple(m), tuple(b), eval_f, eval_m, eval_b, 10.0)
+
+        dets = [
+            CardDetection(
+                detection_id=f"c_{i}",
+                bbox=(50 + (i % 5) * 60, 50 + (i // 5) * 80, 50, 70),
+                polygon=[],
+                detection_confidence=0.99,
+            )
+            for i in range(13)
+        ]
+        for d, c in zip(dets, cards):
+            d.card = c
+
+        # Setup panel 1 and 2
+        widget.panels[1].last_partition = partition
+        widget.panels[1].last_detected_cards = dets
+        widget.panels[2].last_partition = partition
+        widget.panels[2].last_detected_cards = dets
+
+        executed_windows = []
+        def fake_start(window_idx, on_done_callback=None):
+            executed_windows.append(window_idx)
+            if on_done_callback:
+                on_done_callback(True, f"Bàn {window_idx} xong")
+
+        with patch.object(widget, "_start_auto_binh_for_window", side_effect=fake_start), \
+             patch("PySide6.QtWidgets.QMessageBox.information") as mock_info:
+
+            widget._on_auto_binh_all_clicked()
+            qapp.processEvents()
+
+            # Verify alternating sequential execution of ready windows
+            assert 1 in executed_windows
+            # Verify no popup dialog is shown
+            assert not mock_info.called
+
+        widget.close()
+
+    def test_start_auto_binh_uses_imported_time_and_cleans_up(self, qapp, temp_db):
+        from unittest.mock import patch, MagicMock
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+        from app.core.card import Card, Rank, Suit
+        from app.core.solver import HandArrangement
+        from app.core.evaluator import HandEvaluation, HandCategory
+        from app.vision.card_detector import CardDetection
+
+        widget = MultiWindowWidget()
+
+        # Mock cards in non-optimal order to trigger swap moves
+        cards = [Card(Rank(r), Suit.HEARTS) for r in range(2, 15)]
+        # Target partition
+        f = cards[0:3]
+        m = cards[3:8]
+        b = cards[8:13]
+        eval_f = HandEvaluation(HandCategory.HIGH_CARD, (4, 3, 2), tuple(f), "High", is_front_hand=True)
+        eval_m = HandEvaluation(HandCategory.HIGH_CARD, (9, 8, 7, 6, 5), tuple(m), "High")
+        eval_b = HandEvaluation(HandCategory.HIGH_CARD, (14, 13, 12, 11, 10), tuple(b), "High")
+        partition = HandArrangement(tuple(f), tuple(m), tuple(b), eval_f, eval_m, eval_b, 10.0)
+
+        # Invert card detection order so moves are required
+        swapped_cards = list(reversed(cards))
+        dets = [
+            CardDetection(
+                detection_id=f"c_{i}",
+                bbox=(50 + (i % 5) * 60, 50 + (i // 5) * 80, 50, 70),
+                polygon=[],
+                detection_confidence=0.99,
+            )
+            for i in range(13)
+        ]
+        for d, c in zip(dets, swapped_cards):
+            d.card = c
+
+        widget.panels[1].last_partition = partition
+        widget.panels[1].last_detected_cards = dets
+        widget.combo_w1.addItem("Game Window 1", 999)
+        widget.combo_w1.setCurrentIndex(widget.combo_w1.count() - 1)
+
+        with patch("time.sleep") as mock_sleep, \
+             patch.object(widget.window_manager, "activate_window") as mock_activate, \
+             patch("app.automation.gesture_manager.AutoBinhWorker.start") as mock_worker_start:
+
+            # Must NOT raise NameError: name 'time' is not defined
+            widget._on_auto_binh_clicked(1)
+            assert mock_activate.called
+            assert mock_sleep.called
+            assert mock_worker_start.called
+
+        # Test closeEvent cleanup
+        widget.close()
+
+    def test_new_round_detection_and_badge_update(self, qapp, temp_db):
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+        from app.core.card import Card, Rank, Suit
+        from app.vision.card_detector import CardDetection
+        from app.vision.card_state import WindowCardState
+
+        widget = MultiWindowWidget()
+        panel = widget.panels[1]
+
+        # Round 1 cards: 2..A of Hearts
+        cards1 = [Card(Rank(r), Suit.HEARTS) for r in range(2, 15)]
+        dets1 = [
+            CardDetection(detection_id=f"c1_{i}", bbox=(50 + i * 20, 50, 40, 60), polygon=[], detection_confidence=0.95)
+            for i in range(13)
+        ]
+        for d, c in zip(dets1, cards1):
+            d.card = c
+
+        state1 = WindowCardState(window_id=1, detected_cards=dets1, status="CONFIRMED_13")
+
+        # Frame 1: Initial detection
+        widget._on_frame_processed(1, state1, None)
+        assert widget.window_round_counters[1] == 0  # Needs 2 stable frames
+
+        # Frame 2: Confirmed stable Round 1
+        widget._on_frame_processed(1, state1, None)
+        assert widget.window_round_counters[1] == 1
+        assert "Ván #1" in panel.lbl_round_badge.text()
+        assert "Phát hiện Ván mới #1" in panel.lbl_status.text()
+
+        # Simulate round completed / table cleared (cards < 8)
+        widget.last_binned_hashes[1] = widget.window_current_hashes[1]
+        state_cleared = WindowCardState(window_id=1, detected_cards=[], status="IDLE")
+        widget._on_frame_processed(1, state_cleared, None)
+        assert "Đang chờ chia bài ván mới" in panel.lbl_status.text()
+
+        # Round 2 cards: 2..A of Spades (Different Hash!)
+        cards2 = [Card(Rank(r), Suit.SPADES) for r in range(2, 15)]
+        dets2 = [
+            CardDetection(detection_id=f"c2_{i}", bbox=(50 + i * 20, 50, 40, 60), polygon=[], detection_confidence=0.95)
+            for i in range(13)
+        ]
+        for d, c in zip(dets2, cards2):
+            d.card = c
+
+        state2 = WindowCardState(window_id=1, detected_cards=dets2, status="CONFIRMED_13")
+        widget._on_frame_processed(1, state2, None)
+        widget._on_frame_processed(1, state2, None)
+
+        assert widget.window_round_counters[1] == 2
+        assert "Ván #2" in panel.lbl_round_badge.text()
+        assert "Phát hiện Ván mới #2" in panel.lbl_status.text()
+
+        widget.close()
+
+    def test_continuous_auto_loop_mode(self, qapp, temp_db):
+        from unittest.mock import patch
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+        from app.core.card import Card, Rank, Suit
+        from app.core.solver import HandArrangement
+        from app.core.evaluator import HandEvaluation, HandCategory
+        from app.vision.card_detector import CardDetection
+        from app.vision.card_state import WindowCardState
+
+        widget = MultiWindowWidget()
+        panel = widget.panels[1]
+
+        # Prepare partition and 13 detected cards
+        cards = [Card(Rank(r), Suit.DIAMONDS) for r in range(2, 15)]
+        eval_f = HandEvaluation(HandCategory.HIGH_CARD, (4, 3, 2), tuple(cards[0:3]), "High", is_front_hand=True)
+        eval_m = HandEvaluation(HandCategory.HIGH_CARD, (9, 8, 7, 6, 5), tuple(cards[3:8]), "High")
+        eval_b = HandEvaluation(HandCategory.HIGH_CARD, (14, 13, 12, 11, 10), tuple(cards[8:13]), "High")
+        partition = HandArrangement(tuple(cards[0:3]), tuple(cards[3:8]), tuple(cards[8:13]), eval_f, eval_m, eval_b, 10.0)
+
+        dets = [
+            CardDetection(detection_id=f"cd_{i}", bbox=(50 + i * 20, 50, 40, 60), polygon=[], detection_confidence=0.95)
+            for i in range(13)
+        ]
+        for d, c in zip(dets, cards):
+            d.card = c
+
+        # Toggle Auto-Loop mode ON
+        widget._toggle_auto_loop()
+        assert widget.is_auto_loop_enabled is True
+        assert "ĐANG BẬT" in widget.btn_auto_loop.text()
+
+        state = WindowCardState(window_id=1, detected_cards=dets, status="CONFIRMED_13")
+
+        started_windows = []
+        def fake_start_auto_binh(w_idx, on_done_callback=None):
+            started_windows.append(w_idx)
+            if on_done_callback:
+                on_done_callback(True, f"Bàn {w_idx} đã binh xong")
+
+        with patch.object(widget, "_start_auto_binh_for_window", side_effect=fake_start_auto_binh):
+            # Emit solution first, then process frames
+            widget._on_solution_found(1, partition)
+            widget._on_frame_processed(1, state, None)
+            widget._on_frame_processed(1, state, None)
+            qapp.processEvents()
+
+            # Verify auto-loop triggered execution for window 1 without clicking!
+            assert 1 in started_windows
+            assert widget.total_binned_rounds == 1
+            assert "Đã binh: 1 ván" in widget.lbl_loop_counter.text()
+
+            # Process same frame again: should NOT trigger execution again
+            started_windows.clear()
+            widget._on_frame_processed(1, state, None)
+            qapp.processEvents()
+            assert len(started_windows) == 0  # No redundant execution!
+
+        # Toggle Auto-Loop mode OFF
+        widget._toggle_auto_loop()
+        assert widget.is_auto_loop_enabled is False
+        assert "TẮT" in widget.btn_auto_loop.text()
+
+        widget.close()
+
+
 
 

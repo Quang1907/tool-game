@@ -1,9 +1,9 @@
 # TEST STATUS & VERIFICATION REPORT — BINH 13 ANALYZER
 
-**Thời điểm kiểm tra gần nhất:** 2026-10-30 09:44:00 +09:00  
+**Thời điểm kiểm tra gần nhất:** 2026-10-31 08:20:00 +09:00  
 **Lệnh thực thi:** `.venv/bin/pytest tests/`  
-**Kết quả chung:** **144 / 144 tests PASSED (100%)**  
-**Thời gian chạy:** 32.51 giây  
+**Kết quả chung:** **149 / 149 tests PASSED (100%)**  
+**Thời gian chạy:** 31.00 giây  
 **Nền tảng:** macOS Sequoia 15.4.1 (ARM64 Apple Silicon) | Python 3.11.17
 
 ---
@@ -24,7 +24,7 @@
 | `tests/test_ui.py`                           |    5    | **5 PASSED**  | MainWindow (7 tabs), CardEditDialog, CardReferenceManager, ZoomableImageViewer         |
 | `tests/test_vision.py`                       |   28    | **28 PASSED** | Xử lý ảnh, template matching, NMS, tách bài xòe, 9 mẫu bài thực tế                      |
 | `tests/test_card_detection_and_reference.py` |   42    | **42 PASSED** | Bộ test bắt buộc, 6♥/5♥, màu Đen/Đỏ, cô lập J/Q/K, chống ghosting 2♠, 2♠ vs 2♣, subpixel shift |
-| `tests/test_auto_binh.py`                    |   14    | **14 PASSED** | Slot models, 156-pair CRUD, MovePlanner, Bézier, Visual 13-board, Wizard, Trajectory Warp, Window Activate, Shrunk Bounds Invariance |
+| `tests/test_auto_binh.py`                    |   19    | **19 PASSED** | Slot models, 156-pair CRUD, MovePlanner, Bézier, Visual 13-board, Wizard, Trajectory Warp, Window Activate, Shrunk Bounds Invariance, Smooth Move & Focus Click, Alternating 3-Window Auto-Binh, Safe Time & Thread Cleanup, New Hand Detection & Continuous Auto-Loop |
 
 ---
 

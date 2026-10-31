@@ -44,6 +44,7 @@ class MultiWindowWorker(QObject):
         self.state_manager = CardStateManager(debounce_frames=2)
         self.poll_interval = poll_interval_sec
         self._is_running = False
+        self._solution_cache: Dict[str, HandArrangement] = {}
 
     def start_loop(self) -> None:
         """Main execution loop running in background thread."""
@@ -129,13 +130,18 @@ class MultiWindowWorker(QObject):
                                 break
 
                     if len(valid_cards) == 13:
-                        self.status_updated.emit(f"Cửa sổ #{roi.window_id}: Đang tính toán 13 lá...")
-                        try:
-                            arrangements = self.solver.solve_heuristic(valid_cards)
-                            if arrangements:
-                                self.solution_found.emit(roi.window_id, arrangements[0])
-                        except Exception as e:
-                            self.status_updated.emit(f"Cửa sổ #{roi.window_id}: Lỗi giải bài — {e}")
+                        card_hash = state.card_hash or CardStateManager.compute_position_invariant_hash(detected_cards)
+                        if card_hash in self._solution_cache:
+                            self.solution_found.emit(roi.window_id, self._solution_cache[card_hash])
+                        else:
+                            self.status_updated.emit(f"Cửa sổ #{roi.window_id}: Đang tính toán 13 lá...")
+                            try:
+                                arrangements = self.solver.solve_heuristic(valid_cards)
+                                if arrangements:
+                                    self._solution_cache[card_hash] = arrangements[0]
+                                    self.solution_found.emit(roi.window_id, arrangements[0])
+                            except Exception as e:
+                                self.status_updated.emit(f"Cửa sổ #{roi.window_id}: Lỗi giải bài — {e}")
 
                 # Calculate loop FPS
                 elapsed = time.perf_counter() - loop_start

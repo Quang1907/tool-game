@@ -1,10 +1,11 @@
 """Multi-Window Bot Widget: 3-window simultaneous game monitor and analyzer on macOS."""
 
 from __future__ import annotations
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -20,6 +21,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.automation.gesture_manager import AutoBinhWorker, GestureManager
+from app.automation.move_planner import MovePlanner
 from app.core.card import Card
 from app.core.collaborative_analyzer import (
     CollaborativeTableAnalyzer,
@@ -35,7 +38,7 @@ from app.ui.components.zoomable_viewer import ZoomableImageViewer
 from app.vision.card_detector import CardDetector
 from app.vision.card_recognizer import CardRecognizer
 from app.vision.card_reference_library import CardReferenceLibrary
-from app.vision.card_state import WindowCardState
+from app.vision.card_state import CardStateManager, WindowCardState
 from app.vision.roi_manager import WindowROI
 from app.vision.screen_capture import ScreenCapture
 from app.vision.window_manager import WindowItem, WindowManager
@@ -65,6 +68,12 @@ class SingleWindowPanel(QGroupBox):
         self.lbl_status.setStyleSheet("color: #8E8E93; font-weight: 600; font-size: 11px;")
         header.addWidget(self.lbl_status)
         header.addStretch()
+
+        self.lbl_round_badge = QLabel("Ván: —")
+        self.lbl_round_badge.setStyleSheet(
+            "color: #8E8E93; font-weight: bold; font-size: 11px; background: rgba(142,142,147,0.15); padding: 2px 6px; border-radius: 4px;"
+        )
+        header.addWidget(self.lbl_round_badge)
         layout.addLayout(header)
 
         # Live Image Viewer
@@ -202,6 +211,24 @@ class SingleWindowPanel(QGroupBox):
         else:
             self.lbl_opp_outcome.setStyleSheet("font-size: 11px; font-weight: 600; color: #FF9F0A;")
             self.box_solution.setTitle("Gợi ý xếp bài tối ưu")
+
+    def set_round(self, round_num: int, is_new: bool = False, is_completed: bool = False) -> None:
+        """Updates round badge visual indicator for this window."""
+        if is_new:
+            self.lbl_round_badge.setText(f"Ván #{round_num} (MỚI)")
+            self.lbl_round_badge.setStyleSheet(
+                "color: #64D2FF; font-weight: bold; font-size: 11px; background: rgba(100,210,255,0.22); padding: 2px 6px; border-radius: 4px; border: 1px solid #64D2FF;"
+            )
+        elif is_completed:
+            self.lbl_round_badge.setText(f"Ván #{round_num} (Đã binh)")
+            self.lbl_round_badge.setStyleSheet(
+                "color: #30D158; font-weight: bold; font-size: 11px; background: rgba(48,209,88,0.22); padding: 2px 6px; border-radius: 4px;"
+            )
+        else:
+            self.lbl_round_badge.setText(f"Ván #{round_num}")
+            self.lbl_round_badge.setStyleSheet(
+                "color: #FF9F0A; font-weight: bold; font-size: 11px; background: rgba(255,159,10,0.18); padding: 2px 6px; border-radius: 4px;"
+            )
 
 
 class OpponentDeductionPanel(QGroupBox):
@@ -344,6 +371,18 @@ class MultiWindowWidget(QWidget):
         self._worker: Optional[MultiWindowWorker] = None
         self.discovered_windows: List[WindowItem] = []
         self._auto_binh_workers: Dict[int, Any] = {}
+        self._pending_alternating_windows: List[int] = []
+
+        # Round Tracking & Continuous Auto-Loop state
+        self.is_auto_loop_enabled: bool = False
+        self.window_round_counters: Dict[int, int] = {1: 0, 2: 0, 3: 0}
+        self.last_binned_hashes: Dict[int, str] = {1: "", 2: "", 3: ""}
+        self.window_stable_hashes: Dict[int, Tuple[str, int]] = {1: ("", 0), 2: ("", 0), 3: ("", 0)}
+        self.window_current_hashes: Dict[int, str] = {1: "", 2: "", 3: ""}
+        self.is_auto_binh_executing: bool = False
+        self.auto_loop_queue: List[int] = []
+        self.total_binned_rounds: int = 0
+
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -389,6 +428,34 @@ class MultiWindowWidget(QWidget):
         self.btn_start.setFixedHeight(32)
         self.btn_start.clicked.connect(self._toggle_bot)
         toolbar.addWidget(self.btn_start)
+
+        self.btn_auto_binh_all = QPushButton("⚡ Binh bài cả 3 bàn (Luân phiên)")
+        self.btn_auto_binh_all.setFixedHeight(32)
+        self.btn_auto_binh_all.setStyleSheet(
+            "background-color: #5E5CE6; color: white; font-weight: bold; padding: 4px 12px; border-radius: 6px;"
+        )
+        self.btn_auto_binh_all.setToolTip(
+            "Tự động luân phiên xếp bài trên cả 3 cửa sổ/tab: Hoàn tất bàn 1 -> chuyển bàn 2 -> chuyển bàn 3"
+        )
+        self.btn_auto_binh_all.clicked.connect(self._on_auto_binh_all_clicked)
+        toolbar.addWidget(self.btn_auto_binh_all)
+
+        self.btn_auto_loop = QPushButton("🔄 Tự động binh liên tục: TẮT")
+        self.btn_auto_loop.setFixedHeight(32)
+        self.btn_auto_loop.setStyleSheet(
+            "background-color: #3A3A3C; color: #E5E5EA; font-weight: bold; padding: 4px 12px; border-radius: 6px;"
+        )
+        self.btn_auto_loop.setToolTip(
+            "BẬT/TẮT chế độ tự động chạy liên tục: Tự động phát hiện ván bài mới và xếp bài liên tục ván này qua ván khác trên cả 3 bàn"
+        )
+        self.btn_auto_loop.clicked.connect(self._toggle_auto_loop)
+        toolbar.addWidget(self.btn_auto_loop)
+
+        self.lbl_loop_counter = QLabel("Đã binh: 0 ván")
+        self.lbl_loop_counter.setStyleSheet(
+            "color: #FF9F0A; font-weight: bold; font-size: 11px; padding: 4px 8px; background: rgba(255,159,10,0.12); border-radius: 4px;"
+        )
+        toolbar.addWidget(self.lbl_loop_counter)
 
         main_layout.addLayout(toolbar)
 
@@ -568,23 +635,148 @@ class MultiWindowWidget(QWidget):
         self.btn_start.setStyleSheet("")
         self.btn_refresh_wins.setEnabled(True)
         self.lbl_fps.setText("FPS: —")
+        self.is_auto_binh_executing = False
+        self.auto_loop_queue.clear()
+        if self.is_auto_loop_enabled:
+            self.is_auto_loop_enabled = False
+            self.btn_auto_loop.setText("🔄 Tự động binh liên tục: TẮT")
+            self.btn_auto_loop.setStyleSheet(
+                "background-color: #3A3A3C; color: #E5E5EA; font-weight: bold; padding: 4px 12px; border-radius: 6px;"
+            )
+
+    def _toggle_auto_loop(self) -> None:
+        """Toggles continuous auto-loop mode: automatically detects new rounds and arranges cards."""
+        self.is_auto_loop_enabled = not self.is_auto_loop_enabled
+        if self.is_auto_loop_enabled:
+            self.btn_auto_loop.setText("🔄 Tự động binh liên tục: ĐANG BẬT")
+            self.btn_auto_loop.setStyleSheet(
+                "background-color: #30D158; color: white; font-weight: bold; padding: 4px 12px; border-radius: 6px;"
+            )
+            # Auto-start scanner if windows are selected and bot not running
+            has_selected_windows = any(
+                getattr(self, f"combo_w{i}").currentData() for i in (1, 2, 3)
+                if hasattr(self, f"combo_w{i}")
+            )
+            if has_selected_windows and (not self._worker or not self._worker._is_running):
+                self._start_bot()
+
+            # Queue any window that already has an unbinned new hand
+            for wid in (1, 2, 3):
+                p = self.panels.get(wid)
+                if p and p.last_partition and len(p.last_detected_cards) == 13:
+                    curr_hash = CardStateManager.compute_position_invariant_hash(p.last_detected_cards)
+                    if curr_hash and curr_hash != self.last_binned_hashes.get(wid, ""):
+                        if wid not in self.auto_loop_queue:
+                            self.auto_loop_queue.append(wid)
+            self._process_auto_loop_queue()
+        else:
+            self.btn_auto_loop.setText("🔄 Tự động binh liên tục: TẮT")
+            self.btn_auto_loop.setStyleSheet(
+                "background-color: #3A3A3C; color: #E5E5EA; font-weight: bold; padding: 4px 12px; border-radius: 6px;"
+            )
+            self.auto_loop_queue.clear()
+
+    def _process_auto_loop_queue(self) -> None:
+        """Processes the next pending window in auto-loop queue for continuous hand arrangement."""
+        if not self.is_auto_loop_enabled:
+            return
+        if self.is_auto_binh_executing:
+            return
+        if not self.auto_loop_queue:
+            return
+
+        window_idx = self.auto_loop_queue.pop(0)
+        panel = self.panels.get(window_idx)
+        if not panel or not panel.last_partition or len(panel.last_detected_cards) != 13:
+            return
+
+        curr_hash = CardStateManager.compute_position_invariant_hash(panel.last_detected_cards)
+        if not curr_hash or curr_hash == self.last_binned_hashes.get(window_idx, ""):
+            # Already binned this hand
+            return
+
+        self.is_auto_binh_executing = True
+
+        def on_done(success: bool, msg: str) -> None:
+            self.is_auto_binh_executing = False
+            if success:
+                self.last_binned_hashes[window_idx] = curr_hash
+                self.total_binned_rounds += 1
+                self.lbl_loop_counter.setText(f"Đã binh: {self.total_binned_rounds} ván")
+                r_num = self.window_round_counters.get(window_idx, 1)
+                panel.set_round(r_num, is_completed=True)
+                panel.lbl_status.setText(f"✅ Đã xếp xong ván #{r_num} — Đang chờ ván mới...")
+                panel.lbl_status.setStyleSheet("color: #30D158; font-weight: bold;")
+
+            # Short natural delay before processing next window in queue
+            if self.is_auto_loop_enabled and self.auto_loop_queue:
+                QTimer.singleShot(400, self._process_auto_loop_queue)
+
+        self._start_auto_binh_for_window(window_idx, on_done_callback=on_done)
 
     def _on_frame_processed(self, window_id: int, state: WindowCardState, crop_img: Optional[np.ndarray]) -> None:
-        if window_id in self.panels:
-            self.panels[window_id].update_state(state, crop_img)
+        panel = self.panels.get(window_id)
+        if panel:
+            panel.update_state(state, crop_img)
 
         # Collect detected cards for window_id
         valid_cards: List[Card] = []
         seen_codes = set()
-        for d in sorted(state.detected_cards, key=lambda x: x.confidence, reverse=True):
-            if d.card is not None and d.card_code not in seen_codes:
-                seen_codes.add(d.card_code)
+        for d in sorted(
+            state.detected_cards,
+            key=lambda x: getattr(x, "confidence", getattr(x, "detection_confidence", 1.0)),
+            reverse=True,
+        ):
+            code = str(getattr(d, "card_code", d.card.short_name if d.card else ""))
+            if d.card is not None and code not in seen_codes:
+                seen_codes.add(code)
                 valid_cards.append(d.card)
                 if len(valid_cards) == 13:
                     break
 
         self.window_cards[window_id] = valid_cards
         self._evaluate_table_strategy()
+
+        if not panel:
+            return
+
+        # 1. Round cleared / Inter-round waiting state
+        if len(valid_cards) < 8:
+            if self.last_binned_hashes.get(window_id, ""):
+                panel.lbl_status.setText("⏳ Ván cũ đã xong — Đang chờ chia bài ván mới...")
+                panel.lbl_status.setStyleSheet("color: #FF9F0A; font-weight: 600;")
+            self.window_stable_hashes[window_id] = ("", 0)
+            return
+
+        # 2. Check for 13 unique confirmed cards (New Hand Detection)
+        if len(valid_cards) == 13:
+            curr_hash = CardStateManager.compute_position_invariant_hash(state.detected_cards)
+            last_binned = self.last_binned_hashes.get(window_id, "")
+
+            # If this is a new hand that hasn't been binned yet
+            if curr_hash and curr_hash != last_binned:
+                prev_cand, stable_cnt = self.window_stable_hashes.get(window_id, ("", 0))
+                if curr_hash == prev_cand:
+                    stable_cnt += 1
+                else:
+                    stable_cnt = 1
+                self.window_stable_hashes[window_id] = (curr_hash, stable_cnt)
+
+                # Require at least 2 stable frames (~300ms) to ensure cards have settled
+                if stable_cnt >= 2:
+                    if self.window_current_hashes.get(window_id, "") != curr_hash:
+                        self.window_current_hashes[window_id] = curr_hash
+                        self.window_round_counters[window_id] = self.window_round_counters.get(window_id, 0) + 1
+                        r_num = self.window_round_counters[window_id]
+                        panel.set_round(r_num, is_new=True)
+                        panel.lbl_status.setText(f"🎯 Phát hiện Ván mới #{r_num}! Đã nhận diện đủ 13 lá")
+                        panel.lbl_status.setStyleSheet("color: #64D2FF; font-weight: bold;")
+
+                    # If Auto-Loop is active and solution is already ready, queue it!
+                    if self.is_auto_loop_enabled and panel.last_partition is not None:
+                        if window_id not in self.auto_loop_queue:
+                            self.auto_loop_queue.append(window_id)
+                        self._process_auto_loop_queue()
 
     def _evaluate_table_strategy(self) -> None:
         """Executes table-wide collaborative deduction of 4th opponent hand and counter-strategy."""
@@ -607,19 +799,83 @@ class MultiWindowWidget(QWidget):
             if not hasattr(panel, "lbl_opp_outcome") or "BẮT SẬP" not in panel.lbl_opp_outcome.text():
                 panel.update_solution(solution)
 
+            # In Auto-Loop mode: check if this window has an un-binned new hand ready
+            if self.is_auto_loop_enabled:
+                curr_hash = self.window_current_hashes.get(window_id, "")
+                last_binned = self.last_binned_hashes.get(window_id, "")
+                if curr_hash and curr_hash != last_binned:
+                    if window_id not in self.auto_loop_queue:
+                        self.auto_loop_queue.append(window_id)
+                    self._process_auto_loop_queue()
+
     def _on_auto_binh_clicked(self, window_idx: int) -> None:
+        """Executes auto-binh arrangement moves on a single window."""
+        self._start_auto_binh_for_window(window_idx, on_done_callback=None)
+
+    def _on_auto_binh_all_clicked(self) -> None:
+        """Sequentially executes auto-binh across all active windows in alternating order (1 -> 2 -> 3)."""
+        ready_indices: List[int] = []
+        for i in (1, 2, 3):
+            p = self.panels.get(i)
+            if p and p.last_partition and len(p.last_detected_cards) == 13:
+                ready_indices.append(i)
+
+        if not ready_indices:
+            QMessageBox.warning(
+                self,
+                "Chưa đủ dữ liệu",
+                "Chưa có bàn chơi nào nhận diện đủ 13 lá và có gợi ý xếp bài để tự động binh!\n\nHãy đảm bảo các bàn chơi đã chia bài và quét nhận diện thành công.",
+            )
+            return
+
+        self.btn_auto_binh_all.setEnabled(False)
+        self.btn_auto_binh_all.setText("⏳ Đang luân phiên binh 3 bàn...")
+        self._pending_alternating_windows = list(ready_indices)
+        self._execute_next_alternating_window()
+
+    def _execute_next_alternating_window(self) -> None:
+        if not self._pending_alternating_windows:
+            self.btn_auto_binh_all.setEnabled(True)
+            self.btn_auto_binh_all.setText("⚡ Binh bài cả 3 bàn (Luân phiên)")
+            return
+
+        window_idx = self._pending_alternating_windows.pop(0)
+
+        def on_window_done(success: bool, msg: str) -> None:
+            if self._pending_alternating_windows:
+                # 400ms pause before activating next window to simulate natural delay
+                QTimer.singleShot(400, self._execute_next_alternating_window)
+            else:
+                self.btn_auto_binh_all.setEnabled(True)
+                self.btn_auto_binh_all.setText("⚡ Binh bài cả 3 bàn (Luân phiên)")
+
+        self._start_auto_binh_for_window(window_idx, on_done_callback=on_window_done)
+
+    def _start_auto_binh_for_window(
+        self, window_idx: int, on_done_callback: Optional[Callable[[bool, str], None]] = None
+    ) -> None:
         """Executes auto-binh arrangement moves on the selected game window using GestureManager."""
         panel = self.panels.get(window_idx)
         if not panel or not panel.last_partition or not panel.last_detected_cards:
-            QMessageBox.warning(self, "Chưa đủ dữ liệu", "Cần phát hiện đủ 13 lá bài và có kết quả xếp bài để tự động binh!")
+            if on_done_callback is None:
+                QMessageBox.warning(self, "Chưa đủ dữ liệu", "Cần phát hiện đủ 13 lá bài và có kết quả xếp bài để tự động binh!")
+            else:
+                on_done_callback(False, "Chưa đủ dữ liệu")
+            return
+
+        existing_worker = self._auto_binh_workers.get(window_idx)
+        if existing_worker and existing_worker.isRunning():
+            panel.lbl_status.setText("⏳ Đang thực hiện xếp bài, vui lòng chờ...")
             return
 
         if len(panel.last_detected_cards) < 13:
-            QMessageBox.warning(self, "Chưa đủ 13 lá", f"Cửa sổ #{window_idx} mới nhận diện được {len(panel.last_detected_cards)}/13 lá!")
+            if on_done_callback is None:
+                QMessageBox.warning(self, "Chưa đủ 13 lá", f"Cửa sổ #{window_idx} mới nhận diện được {len(panel.last_detected_cards)}/13 lá!")
+            else:
+                on_done_callback(False, "Chưa đủ 13 lá")
             return
 
         # 1. Map detected cards to slots 1..13
-        # Sort detected cards vertically into 3 front (top), 5 middle, 5 back (bottom), then horizontally left to right
         sorted_dets = sorted(panel.last_detected_cards, key=lambda d: d.bbox[1])
         front_dets = sorted(sorted_dets[0:3], key=lambda d: d.bbox[0])
         mid_dets = sorted(sorted_dets[3:8], key=lambda d: d.bbox[0])
@@ -638,7 +894,14 @@ class MultiWindowWidget(QWidget):
         plan = MovePlanner.plan_moves(current_slots, panel.last_partition)
 
         if plan.is_already_optimal or plan.total_swaps == 0:
-            QMessageBox.information(self, "Đã tối ưu", "Bài trên bàn chơi đã được xếp đúng theo phương án tối ưu, không cần di chuyển thêm!")
+            panel.lbl_status.setText("Bài đã ở vị trí tối ưu, không cần xếp thêm!")
+            panel.lbl_status.setStyleSheet("color: #30D158; font-weight: bold;")
+            curr_hash = CardStateManager.compute_position_invariant_hash(panel.last_detected_cards)
+            self.last_binned_hashes[window_idx] = curr_hash
+            r_num = self.window_round_counters.get(window_idx, 1)
+            panel.set_round(r_num, is_completed=True)
+            if on_done_callback:
+                on_done_callback(True, "Bài đã ở vị trí tối ưu")
             return
 
         # 3. Determine real-time live window bounds and activate game window
@@ -646,7 +909,7 @@ class MultiWindowWidget(QWidget):
         selected_id = combo.currentData() if combo else None
         if selected_id:
             self.window_manager.activate_window(selected_id)
-            time.sleep(0.12)
+            time.sleep(0.18)
 
         live_bounds = self.window_manager.get_window_bounds(selected_id) if selected_id else None
         if live_bounds:
@@ -703,10 +966,25 @@ class MultiWindowWidget(QWidget):
             panel.lbl_status.setText(msg)
             panel.lbl_status.setStyleSheet("color: #30D158; font-weight: bold;" if success else "color: #FF453A; font-weight: bold;")
             if success:
-                QMessageBox.information(self, "Tự Động Binh Bài Hoàn Tất", msg)
-            else:
-                QMessageBox.warning(self, "Tự Động Binh Bài", msg)
+                curr_hash = CardStateManager.compute_position_invariant_hash(panel.last_detected_cards)
+                self.last_binned_hashes[window_idx] = curr_hash
+                r_num = self.window_round_counters.get(window_idx, 1)
+                panel.set_round(r_num, is_completed=True)
+            if on_done_callback:
+                on_done_callback(success, msg)
 
         worker.step_started.connect(on_step)
         worker.finished_result.connect(on_finished)
         worker.start()
+
+    def closeEvent(self, event) -> None:
+        """Ensures all scanning loops and gesture workers are stopped before widget destruction."""
+        self._stop_bot()
+        self.is_auto_loop_enabled = False
+        self.auto_loop_queue.clear()
+        for worker in list(self._auto_binh_workers.values()):
+            if worker and worker.isRunning():
+                worker.stop()
+                worker.wait(800)
+        self._auto_binh_workers.clear()
+        super().closeEvent(event)
