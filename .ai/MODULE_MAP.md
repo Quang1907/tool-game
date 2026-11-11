@@ -23,11 +23,11 @@ Tài liệu này là bản đồ điều hướng chi tiết giúp AI xác đị
 | Tiêu chí | Chi tiết |
 |---|---|
 | **Vai trò** | Chụp màn hình macOS Retina, tiền xử lý ảnh, phát hiện vị trí lá bài ngẫu nhiên/xòe, nhận diện độc lập Rank và Suit, lưu trữ mẫu xác nhận. |
-| **Files** | `screen_capture.py`, `image_preprocessor.py`, `card_detector.py`, `card_recognizer.py`, `card_reference_library.py`, `card_state.py`, `recognition_validator.py`, `roi_manager.py`, `window_manager.py`, `template_engine.py`. |
+| **Files** | `screen_capture.py`, `image_preprocessor.py`, `card_detector.py`, `card_recognizer.py`, `layout_analyzer.py`, `card_reference_library.py`, `card_state.py`, `recognition_validator.py`, `roi_manager.py`, `window_manager.py`, `template_engine.py`. |
 | **Dependencies** | `numpy`, `opencv-python` (`cv2`), `Pillow` (`PIL`), `app.core.card`, `app.database`. |
-| **Public API chính** | - `CardDetector.detect_cards(table_image: np.ndarray) -> List[CardCrop]`<br>- `CardDetector.validate_crop(table_image, det) -> (crop_status, reason)`<br>- `CardRecognizer.recognize_crop(crop: CardCrop) -> DetectedCard`<br>- `CardReferenceLibrary.add_reference(image, card, source)`<br>- `CardReferenceLibrary.match_crop(...)`<br>- `RecognitionValidator.validate(detected_cards) -> ValidationReport` |
+| **Public API chính** | - `CardDetector.detect_cards(table_image: np.ndarray) -> List[CardCrop]`<br>- `CardDetector.validate_crop(table_image, det) -> (crop_status, reason)`<br>- `CardRecognizer.recognize_crop(crop: CardCrop) -> DetectedCard`<br>- `Layout355Analyzer.complete_and_verify_355_layout(...) -> (List[DetectedCard], LayoutVerificationReport)`<br>- `CardReferenceLibrary.add_reference(image, card, source)`<br>- `CardReferenceLibrary.match_crop(...)`<br>- `RecognitionValidator.validate(detected_cards) -> ValidationReport` |
 | **Tài liệu liên quan** | `docs/VISION_MODEL.md`, `.ai/modules/VISION_PIPELINE.md`. |
-| **Tests liên quan** | `tests/test_vision.py`, `tests/test_card_detection_and_reference.py`, `tests/test_multi_window.py`. |
+| **Tests liên quan** | `tests/test_vision.py`, `tests/test_card_detection_and_reference.py`, `tests/test_layout_355.py`, `tests/test_multi_window.py`. |
 | **Điều cần tránh** | - **Tuyệt đối không dùng tọa độ ô cố định** để crop bài.<br>- Không được tự động đoán `KD` khi crop không có cấu trúc góc bài.<br>- Không lưu mẫu vào thư viện nếu chưa có xác nhận từ người dùng.<br>- Không bỏ qua candidate validation (tránh nhận diện avatar thành bài). |
 
 ---

@@ -91,11 +91,26 @@ def recognize_cards_pipeline(
             seen_codes[code] = det
             strict_detected.append(det)
 
+    # Master Binh 13 (3-5-5 Layout) Analysis, Missing Card Recovery & Duplicate Misreading Prevention
+    report_summary = ""
+    if len(strict_detected) >= 6:
+        from app.vision.layout_analyzer import Layout355Analyzer
+        completed_cards, layout_report = Layout355Analyzer.complete_and_verify_355_layout(
+            table_image=image,
+            detected_cards=strict_detected,
+            raw_detected=raw_detected,
+            detector=detector,
+            recognizer=recognizer,
+        )
+        if len(completed_cards) >= len(strict_detected):
+            strict_detected = completed_cards
+        report_summary = f" {layout_report.summary_str()}"
+
     debug_info.confirmed_count = len(strict_detected)
     debug_info.uncertain_count = len([d for d in raw_detected if d not in strict_detected])
 
     if progress_callback:
-        progress_callback(100, 100, f"Hoàn thành: {len(strict_detected)} lá bài đạt chuẩn.")
+        progress_callback(100, 100, f"Hoàn thành: {len(strict_detected)} lá bài đạt chuẩn.{report_summary}")
 
     return strict_detected, debug_info
 

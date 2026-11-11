@@ -379,15 +379,19 @@ class VisionWidget(QWidget):
 
             # Badge / Label for confidence & reference match
             conf_pct = int(det.confidence * 100) if det.card else 0
-            if det.is_reference_match:
-                conf_text = f"{conf_pct}% [Mẫu]"
+            slot_tag = f"Ô {det.slot_number}: " if getattr(det, "slot_number", 0) > 0 else ""
+            if getattr(det, "is_recovered", False):
+                conf_text = f"{slot_tag}[Khôi phục 3-5-5]"
+                conf_color = "#32D74B"
+            elif det.is_reference_match:
+                conf_text = f"{slot_tag}{conf_pct}% [Mẫu]"
                 conf_color = "#30D158"
             elif det.is_uncertain:
                 has_uncertain = True
-                conf_text = f"{conf_pct}% [Nghi ngờ]"
+                conf_text = f"{slot_tag}{conf_pct}% [Nghi ngờ]"
                 conf_color = "#FF9F0A"
             else:
-                conf_text = f"{conf_pct}%"
+                conf_text = f"{slot_tag}{conf_pct}%"
                 conf_color = "#30D158" if det.confidence >= 0.70 else "#FF9F0A"
 
             conf_lbl = QLabel(conf_text)
@@ -410,8 +414,11 @@ class VisionWidget(QWidget):
         report = RecognitionValidator.validate(self.detected_cards)
         
         if valid_cards_count < 13:
+            f_c = report.front_count
+            m_c = report.middle_count
+            b_c = report.back_count
             self.lbl_validation_msg.setText(
-                f"⚠️ Chỉ phát hiện {valid_cards_count}/13 lá bài đạt chuẩn (Đủ Rank & Suit và Độ tin cậy > 65%). Vui lòng Click vào ảnh hoặc bổ sung thủ công!"
+                f"⚠️ Phát hiện {valid_cards_count}/13 lá (Bố cục 3-5-5: Chi 1={f_c}/3, Chi 2={m_c}/5, Chi 3={b_c}/5). Vui lòng kiểm tra lại bàn chơi!"
             )
             self.lbl_validation_msg.setStyleSheet("color: #FF9F0A; font-weight: 600;")
             self.btn_confirm.setEnabled(False)  # Khóa nút xác nhận chuyển sang xếp bài

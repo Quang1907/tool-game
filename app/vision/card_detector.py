@@ -184,10 +184,9 @@ class CardDetector:
         is_white = (hsv[:, :, 1] <= 110) & (hsv[:, :, 2] >= 115) & (gray >= 120) & (~is_green_glow)
         card_mask = is_white.astype(np.uint8) * 255
 
-        # Light morphological close with small 3x3 kernel to bridge text/glyphs without merging adjacent cards
+        # Light morphological open to eliminate isolated noise without bridging adjacent cards
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         cleaned_mask = cv2.morphologyEx(card_mask, cv2.MORPH_OPEN, kernel)
-        closed_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, kernel)
 
         # Explicitly detect prominent colored UI elements (buttons, banners) for rejection diagnostics
         is_colored_ui = (hsv[:, :, 1] >= 120) & (hsv[:, :, 2] >= 110)
@@ -200,7 +199,7 @@ class CardDetector:
                     self._record_rejection(debug_info, "ui_button")
 
         # 2. External Contour Discovery
-        contours, _ = cv2.findContours(closed_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         debug_info.raw_candidates_found = len(contours)
 
         candidates: List[CardDetection] = []
@@ -309,6 +308,10 @@ class CardDetector:
 
         # 5. Non-Maximum Suppression (NMS) with Object-Level Deduplication
         filtered_dets = self._apply_nms(candidates, debug_info=debug_info, iou_threshold=0.48)
+
+        # 5b. Binh 13 Layout Grid Recovery (Recovers missing card bounding boxes in 3-5-5 layout)
+        if 8 <= len(filtered_dets) < 13:
+            filtered_dets = self._recover_missing_grid_detections(table_image, filtered_dets)
 
         # 6. Natural Spatial Ordering (row-by-row top to bottom, then left to right)
         if filtered_dets:
@@ -447,6 +450,88 @@ class CardDetector:
             detections.append(det)
 
         return detections
+
+    def _recover_missing_grid_detections(
+        self, table_image: np.ndarray, detections: List[CardDetection]
+    ) -> List[CardDetection]:
+        """Recovers missing card bounding boxes in a 3-5-5 Binh layout when 8 to 12 cards are detected."""
+        if len(detections) < 8 or len(detections) >= 13:
+            return detections
+
+        img_h, img_w = table_image.shape[:2]
+        widths = [d.bbox[2] for d in detections if d.bbox[2] > 0]
+        heights = [d.bbox[3] for d in detections if d.bbox[3] > 0]
+        if not widths or not heights:
+            return detections
+
+        med_w = int(np.median(widths))
+        med_h = int(np.median(heights))
+        row_tol = max(24.0, med_h * 0.45)
+
+        # Sort and cluster into rows
+        sorted_by_y = sorted(detections, key=lambda d: d.bbox[1])
+        clusters: List[List[CardDetection]] = []
+        cur = [sorted_by_y[0]]
+        for d in sorted_by_y[1:]:
+            if (d.bbox[1] - cur[-1].bbox[1]) <= row_tol:
+                cur.append(d)
+            else:
+                clusters.append(cur)
+                cur = [d]
+        if cur:
+            clusters.append(cur)
+
+        # Only process if 2 or 3 distinct rows are present (characteristic of 3-5-5 layout)
+        if len(clusters) not in (2, 3):
+            return detections
+
+        # Calculate pitch
+        all_pitches = []
+        for c in clusters:
+            if len(c) >= 2:
+                xs = sorted([d.bbox[0] for d in c])
+                all_pitches.extend([xs[i + 1] - xs[i] for i in range(len(xs) - 1)])
+        valid_pitches = [p for p in all_pitches if p > (med_w * 0.70)]
+        delta_x = float(np.median(valid_pitches)) if valid_pitches else (med_w * 1.15)
+
+        recovered: List[CardDetection] = list(detections)
+
+        # Inspect internal gaps in rows with missing cards
+        for c in clusters:
+            if len(recovered) >= 13:
+                break
+            if len(c) < 5:
+                xs = sorted([d.bbox[0] for d in c])
+                row_y = int(np.median([d.bbox[1] for d in c]))
+                for i in range(len(xs) - 1):
+                    gap = xs[i + 1] - xs[i]
+                    if gap > (delta_x * 1.55):
+                        # Missing card in gap
+                        est_x = int(xs[i] + gap / 2.0)
+                        if 0 <= est_x < (img_w - med_w) and 0 <= row_y < (img_h - med_h):
+                            patch = table_image[row_y : row_y + med_h, est_x : est_x + med_w]
+                            if patch.size > 0:
+                                hsv_p = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+                                gray_p = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+                                is_card = (hsv_p[:, :, 1] <= 115) & (hsv_p[:, :, 2] >= 110) & (gray_p >= 115)
+                                if (np.count_nonzero(is_card) / float(med_w * med_h)) >= 0.18:
+                                    rx, ry, rw, rh = ImagePreprocessor.refine_card_boundary(
+                                        table_image, (est_x, row_y, med_w, med_h)
+                                    )
+                                    poly = [(rx, ry), (rx + rw, ry), (rx + rw, ry + rh), (rx, ry + rh)]
+                                    new_det = CardDetection(
+                                        detection_id="",
+                                        bbox=(rx, ry, rw, rh),
+                                        polygon=poly,
+                                        detection_confidence=0.88,
+                                        crop_status="VALID_CARD_CROP",
+                                        detection_status="CONFIRMED",
+                                        area=float(rw * rh),
+                                        aspect_ratio=round(rw / float(rh), 3),
+                                    )
+                                    recovered.append(new_det)
+
+        return recovered
 
     def _build_single_crop(
         self, table_image: np.ndarray, det: CardDetection

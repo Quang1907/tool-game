@@ -63,10 +63,14 @@ class ZoomableImageViewer(QGraphicsView):
             x, y, w, h = det.bbox
 
             # Color coding based on status and confidence
-            if det.is_verified or det.is_reference_match:
+            is_ver = getattr(det, "is_verified", False)
+            is_ref = getattr(det, "is_reference_match", False)
+            is_unc = getattr(det, "is_uncertain", False)
+            conf = getattr(det, "confidence", getattr(det, "detection_confidence", 1.0))
+            if is_ver or is_ref:
                 border_color = QColor("#0A84FF")  # Apple Blue
                 fill_color = QColor(10, 132, 255, 35)
-            elif det.is_uncertain or det.confidence < 0.65:
+            elif is_unc or conf < 0.65:
                 border_color = QColor("#FF9F0A")  # Apple Orange
                 fill_color = QColor(255, 159, 10, 35)
             else:

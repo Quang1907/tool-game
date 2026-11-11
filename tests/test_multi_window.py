@@ -221,5 +221,110 @@ class TestDirectWindowCaptureAndSelection:
         assert win.tab_multi_bot.reference_library is win.tab_vision.reference_library
         win.close()
 
+    def test_screen_mode_initial_state_and_selection_landing(self, qapp):
+        """Verifies that MultiWindowWidget opens with the Screen Selection landing page initially."""
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+
+        widget = MultiWindowWidget()
+        assert widget.stacked_widget.currentIndex() == 0, "Initial view must be the screen selection landing page (anti-clutter)"
+        assert widget.has_selected_screen_mode is False
+        assert widget.selection_page.card1 is not None
+        assert widget.selection_page.card2 is not None
+        assert widget.selection_page.card3 is not None
+        widget.close()
+
+    def test_screen_mode_1_selection_layout_and_anti_clutter(self, qapp):
+        """Verifies 1-screen mode expands panel 1, hides panels 2 & 3, hides opponent panel, and cleans up toolbar."""
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+
+        widget = MultiWindowWidget()
+        widget.set_screen_mode(1)
+
+        assert widget.active_screen_count == 1
+        assert widget.has_selected_screen_mode is True
+        assert widget.stacked_widget.currentIndex() == 1
+
+        # Visible vs hidden panels
+        assert widget.panels[1].isHidden() is False
+        assert widget.panels[1].title() == "Bàn Chơi"
+        assert widget.panels[1].box_vs_opp.isHidden() is True, "Counter strategy box must be hidden in 1-screen mode"
+        assert widget.panels[2].isHidden() is True, "Panel 2 must be hidden in 1-screen mode"
+        assert widget.panels[3].isHidden() is True, "Panel 3 must be hidden in 1-screen mode"
+
+        # Opponent deduction panel hidden
+        assert widget.opponent_panel.isHidden() is True, "Opponent deduction panel must be hidden in 1-screen mode"
+
+        # Combo boxes and labels
+        assert widget.combo_w1.isHidden() is False
+        assert widget.combo_w2.isHidden() is True
+        assert widget.combo_w3.isHidden() is True
+        assert widget.lbl_w1.isHidden() is False
+        assert widget.lbl_w2.isHidden() is True
+        assert widget.lbl_w3.isHidden() is True
+
+        # Action button labels
+        assert widget.btn_start.text() == "▶ Bắt đầu quét 1 cửa sổ"
+        assert widget.btn_auto_binh_all.text() == "⚡ Tự Động Binh Bài"
+
+        widget.close()
+
+    def test_screen_mode_2_selection_layout(self, qapp):
+        """Verifies 2-screen mode shows panels 1 & 2, hides panel 3, hides opponent panel, and adapts controls."""
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+
+        widget = MultiWindowWidget()
+        widget.set_screen_mode(2)
+
+        assert widget.active_screen_count == 2
+        assert widget.stacked_widget.currentIndex() == 1
+
+        assert widget.panels[1].isHidden() is False
+        assert widget.panels[2].isHidden() is False
+        assert widget.panels[3].isHidden() is True
+        assert widget.opponent_panel.isHidden() is True
+
+        assert widget.combo_w1.isHidden() is False
+        assert widget.combo_w2.isHidden() is False
+        assert widget.combo_w3.isHidden() is True
+
+        assert widget.btn_start.text() == "▶ Bắt đầu quét 2 cửa sổ"
+        assert widget.btn_auto_binh_all.text() == "⚡ Binh bài cả 2 bàn (Luân phiên)"
+
+        widget.close()
+
+    def test_screen_mode_3_selection_layout_and_reset(self, qapp):
+        """Verifies 3-screen mode shows all 3 panels and opponent deduction, and reset returns to selection view."""
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+
+        widget = MultiWindowWidget()
+        widget.set_screen_mode(3)
+
+        assert widget.active_screen_count == 3
+        assert widget.stacked_widget.currentIndex() == 1
+
+        assert widget.panels[1].isHidden() is False
+        assert widget.panels[2].isHidden() is False
+        assert widget.panels[3].isHidden() is False
+        assert widget.opponent_panel.isHidden() is False
+
+        assert widget.combo_w1.isHidden() is False
+        assert widget.combo_w2.isHidden() is False
+        assert widget.combo_w3.isHidden() is False
+
+        assert widget.btn_start.text() == "▶ Bắt đầu quét 3 cửa sổ"
+        assert widget.btn_auto_binh_all.text() == "⚡ Binh bài cả 3 bàn (Luân phiên)"
+
+        # Test reset back to selection landing page
+        widget.reset_screen_selection()
+        assert widget.stacked_widget.currentIndex() == 0
+
+        # Test card click emits signal and switches mode
+        widget.selection_page.card1.btn_select.click()
+        assert widget.active_screen_count == 1
+        assert widget.stacked_widget.currentIndex() == 1
+
+        widget.close()
+
+
 
 

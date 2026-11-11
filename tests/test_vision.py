@@ -592,4 +592,34 @@ class TestRealCardRecognition:
         assert detected.is_uncertain is True
         assert len(detected.uncertain_reason) > 0
 
+    def test_tightly_spaced_13_cards_table_detection_with_rank_7(self):
+        """CardDetector reliably segments 13 cards arranged in 3 tight rows (3-5-5) without merging rows."""
+        table = np.zeros((450, 600, 3), dtype=np.uint8)
+        table[:, :] = (20, 60, 25)  # Dark green felt
+
+        # 13 cards: Row 1 has 3, Row 2 has 5, Row 3 has 5.
+        # Spaced by only 3px vertically, replicating Rikvip/Mậu Binh real layout
+        card_w, card_h = 56, 80
+        detector = CardDetector()
+
+        # Render 13 cards
+        # Row 1 (y=40): 3 cards (x: 150, 215, 280)
+        for x in (150, 215, 280):
+            table[40 : 40 + card_h, x : x + card_w] = (245, 245, 245)
+            table[45 : 65, x + 5 : x + 20] = (10, 10, 10)  # text placeholder
+
+        # Row 2 (y=125): 5 cards (x: 90, 150, 210, 270, 330) - Row gap is only 5px!
+        for x in (90, 150, 210, 270, 330):
+            table[125 : 125 + card_h, x : x + card_w] = (245, 245, 245)
+            table[130 : 150, x + 5 : x + 20] = (10, 10, 10)
+
+        # Row 3 (y=210): 5 cards (x: 90, 150, 210, 270, 330)
+        for x in (90, 150, 210, 270, 330):
+            table[210 : 210 + card_h, x : x + card_w] = (245, 245, 245)
+            table[215 : 235, x + 5 : x + 20] = (10, 10, 10)
+
+        crops, debug = detector.detect_card_objects(table)
+        assert len(crops) == 13, f"Expected exactly 13 cards, got {len(crops)}"
+
+
 

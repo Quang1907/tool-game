@@ -43,6 +43,10 @@ class DetectedCard:
     is_overlapping: bool = False
     is_partially_occluded: bool = False
     recognition_status: str = "CONFIRMED"
+    slot_number: int = 0                    # 1 to 13 according to 3-5-5 layout
+    row_name: str = ""                     # "front", "middle", "back"
+    col_index: int = 0                     # 1..3 or 1..5
+    is_recovered: bool = False             # True if recovered by 3-5-5 layout inference
 
     @property
     def display_str(self) -> str:
@@ -96,6 +100,10 @@ class DetectedCard:
             "alternative_candidates": self.alternative_candidates,
             "matched_reference_id": self.matched_reference_id,
             "matched_similarity": round(self.matched_similarity, 4),
+            "slot_number": self.slot_number,
+            "row_name": self.row_name,
+            "col_index": self.col_index,
+            "is_recovered": self.is_recovered,
         }
 
 

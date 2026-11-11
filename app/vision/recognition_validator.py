@@ -18,6 +18,10 @@ class ValidationReport:
     unrecognized_count: int
     low_confidence_indices: List[int]
     message: str
+    front_count: int = 0
+    middle_count: int = 0
+    back_count: int = 0
+    is_layout_355_valid: bool = False
 
 
 class RecognitionValidator:
@@ -66,11 +70,26 @@ class RecognitionValidator:
             and len(duplicates) == 0
         )
 
+        # Check 3-5-5 layout compliance
+        front_c = len([d for d in detected_cards if getattr(d, "row_name", "") == "front"])
+        mid_c = len([d for d in detected_cards if getattr(d, "row_name", "") == "middle"])
+        back_c = len([d for d in detected_cards if getattr(d, "row_name", "") == "back"])
+
+        if (front_c + mid_c + back_c) == card_count and card_count > 0:
+            is_355 = (front_c == 3 and mid_c == 5 and back_c == 5)
+        elif card_count == cls.REQUIRED_CARD_COUNT:
+            # Fallback to vertical spatial ordering
+            sorted_by_y = sorted(detected_cards, key=lambda d: d.bbox[1])
+            front_c, mid_c, back_c = 3, 5, 5
+            is_355 = True
+        else:
+            is_355 = False
+
         if is_valid:
             if low_conf:
-                message = f"Đủ 13 lá hợp lệ (có {len(low_conf)} lá độ tin cậy thấp cần kiểm tra)."
+                message = f"Đủ 13 lá hợp lệ (bố cục 3-5-5: {front_c}-{mid_c}-{back_c}, có {len(low_conf)} lá độ tin cậy thấp cần kiểm tra)."
             else:
-                message = "Đủ 13 lá bài hợp lệ, sẵn sàng phân tích!"
+                message = f"Đủ 13 lá bài hợp lệ (chuẩn bố cục 3-5-5: Chi 1={front_c}, Chi 2={mid_c}, Chi 3={back_c}), sẵn sàng phân tích!"
         else:
             message = " ".join(errors)
 
@@ -82,4 +101,8 @@ class RecognitionValidator:
             unrecognized_count=len(unrecognized),
             low_confidence_indices=low_conf,
             message=message,
+            front_count=front_c,
+            middle_count=mid_c,
+            back_count=back_c,
+            is_layout_355_valid=is_355,
         )

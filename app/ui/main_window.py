@@ -102,7 +102,7 @@ class MainWindow(QMainWindow):
             reference_library=self.tab_vision.reference_library,
             gesture_manager=self.gesture_manager,
         )
-        self.tabs.addTab(self.tab_multi_bot, "6. Bot 3 Cửa Sổ")
+        self.tabs.addTab(self.tab_multi_bot, "6. Bot 3 Cửa Sổ (Chọn 1-3 Màn)")
 
         # 7. Gesture & Auto-Binh Tab
         self.tab_gestures = GestureWidget(gesture_manager=self.gesture_manager)

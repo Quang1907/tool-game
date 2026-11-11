@@ -714,6 +714,347 @@ class TestGestureWidgetUI:
 
         widget.close()
 
+    def test_strict_13_cards_safety_guard_prevents_foul_auto_binh(self, qapp):
+        """Verifies that missing even a single card (e.g. 12 cards) disables auto-binh, clears solution, and blocks execution."""
+        from unittest.mock import patch
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+        from app.core.card import Card, Rank, Suit
+        from app.core.solver import HandArrangement
+        from app.core.evaluator import HandEvaluation, HandCategory
+        from app.vision.card_detector import CardDetection
+        from app.vision.card_state import WindowCardState
+
+        widget = MultiWindowWidget()
+        panel = widget.panels[1]
+
+        # 1. Provide an arrangement initially
+        cards_13 = [Card(Rank(r), Suit.DIAMONDS) for r in range(2, 15)]
+        eval_f = HandEvaluation(HandCategory.HIGH_CARD, (4, 3, 2), tuple(cards_13[0:3]), "High", is_front_hand=True)
+        eval_m = HandEvaluation(HandCategory.HIGH_CARD, (9, 8, 7, 6, 5), tuple(cards_13[3:8]), "High")
+        eval_b = HandEvaluation(HandCategory.HIGH_CARD, (14, 13, 12, 11, 10), tuple(cards_13[8:13]), "High")
+        partition = HandArrangement(tuple(cards_13[0:3]), tuple(cards_13[3:8]), tuple(cards_13[8:13]), eval_f, eval_m, eval_b, 10.0)
+
+        # 2. Simulate new hand with only 12 cards detected (e.g. Card 7 was missed)
+        dets_12 = [
+            CardDetection(detection_id=f"cd_{i}", bbox=(50 + i * 20, 50, 40, 60), polygon=[], detection_confidence=0.95)
+            for i in range(12)
+        ]
+        for d, c in zip(dets_12, cards_13[:12]):
+            d.card = c
+
+        state_12 = WindowCardState(window_id=1, detected_cards=dets_12, status="DETECTED_12_CARDS")
+        panel.update_state(state_12, None)
+
+        # Verify button is disabled and solution is cleared
+        assert panel.btn_auto_binh.isEnabled() is False
+        assert panel.last_partition is None
+        assert "KHÓA BINH" in panel.lbl_status.text()
+        assert "Đã khóa binh" in panel.lbl_chi_front.text()
+
+        # 3. Attempting to trigger auto-binh on 12 cards MUST be immediately blocked
+        done_called = False
+        def on_done(success, msg):
+            nonlocal done_called
+            done_called = True
+            assert success is False
+            assert "KHÓA BINH" in msg or "12/13" in msg
+
+        widget._start_auto_binh_for_window(1, on_done_callback=on_done)
+        assert done_called is True
+
+        widget.close()
+
+    def test_post_binh_verification_legal_and_foul_detection(self, qapp):
+        """Verifies post-binh verification logic detects legal hand vs foul (binh lủng) accurately."""
+        import numpy as np
+        from unittest.mock import patch, MagicMock
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+        from app.core.card import Card, Rank, Suit
+        from app.core.solver import HandArrangement
+        from app.core.evaluator import HandEvaluation, HandCategory
+        from app.vision.card_detector import CardDetection
+
+        widget = MultiWindowWidget()
+        panel = widget.panels[1]
+
+        # Case 1: Post-binh scan detects legal hand
+        # Chi 1: A-K-Q (High card), Chi 2: 2-2-3-3-4 (Two pair), Chi 3: 5-5-5-6-6 (Full house)
+        c_front = [Card(Rank.ACE, Suit.SPADES), Card(Rank.KING, Suit.HEARTS), Card(Rank.QUEEN, Suit.CLUBS)]
+        c_mid = [Card(Rank.TWO, Suit.SPADES), Card(Rank.TWO, Suit.HEARTS), Card(Rank.THREE, Suit.SPADES), Card(Rank.THREE, Suit.HEARTS), Card(Rank.FOUR, Suit.DIAMONDS)]
+        c_back = [Card(Rank.FIVE, Suit.SPADES), Card(Rank.FIVE, Suit.HEARTS), Card(Rank.FIVE, Suit.CLUBS), Card(Rank.SIX, Suit.SPADES), Card(Rank.SIX, Suit.HEARTS)]
+        all_13 = c_front + c_mid + c_back
+
+        dets_legal = []
+        for i, c in enumerate(c_front):
+            d = CardDetection(detection_id=f"f_{i}", bbox=(50 + i * 40, 50, 36, 50), polygon=[], detection_confidence=0.98)
+            d.card = c
+            d.confidence = 0.98
+            d.is_verified = True
+            d.is_reference_match = False
+            d.is_uncertain = False
+            dets_legal.append(d)
+        for i, c in enumerate(c_mid):
+            d = CardDetection(detection_id=f"m_{i}", bbox=(50 + i * 40, 120, 36, 50), polygon=[], detection_confidence=0.98)
+            d.card = c
+            d.confidence = 0.98
+            d.is_verified = True
+            d.is_reference_match = False
+            d.is_uncertain = False
+            dets_legal.append(d)
+        for i, c in enumerate(c_back):
+            d = CardDetection(detection_id=f"b_{i}", bbox=(50 + i * 40, 190, 36, 50), polygon=[], detection_confidence=0.98)
+            d.card = c
+            d.confidence = 0.98
+            d.is_verified = True
+            d.is_reference_match = False
+            d.is_uncertain = False
+            dets_legal.append(d)
+
+        mock_img = np.ones((300, 400, 3), dtype=np.uint8) * 200
+
+        with patch("app.ui.components.multi_window_widget.ScreenCapture.capture_window_by_id", return_value=mock_img), \
+             patch("app.ui.components.multi_window_widget.recognize_cards_pipeline", return_value=(dets_legal, None)):
+            
+            # Select dummy window id
+            widget.combo_w1.addItem("Game Win", 99999)
+            widget.combo_w1.setCurrentIndex(widget.combo_w1.count() - 1)
+
+            verified = False
+            def on_done(success, msg):
+                nonlocal verified
+                verified = True
+                assert success is True
+
+            widget._verify_post_binh_result(1, None, on_done_callback=on_done)
+            assert verified is True
+            assert "HẬU KIỂM" in panel.lbl_status.text()
+            assert "không lủng" in panel.lbl_status.text()
+
+        # Case 2: Post-binh scan detects foul hand (Chi 1 cù lũ > Chi 2 đôi 2) -> LỦNG CHI
+        c_front_foul = [Card(Rank.ACE, Suit.SPADES), Card(Rank.ACE, Suit.HEARTS), Card(Rank.ACE, Suit.CLUBS)]  # Trips in front!
+        c_mid_weak = [Card(Rank.TWO, Suit.SPADES), Card(Rank.TWO, Suit.HEARTS), Card(Rank.THREE, Suit.SPADES), Card(Rank.FOUR, Suit.HEARTS), Card(Rank.FIVE, Suit.DIAMONDS)] # One pair in mid!
+        c_back_weak = [Card(Rank.SIX, Suit.SPADES), Card(Rank.SIX, Suit.HEARTS), Card(Rank.SEVEN, Suit.CLUBS), Card(Rank.EIGHT, Suit.SPADES), Card(Rank.NINE, Suit.HEARTS)]
+        
+        dets_foul = []
+        for i, c in enumerate(c_front_foul):
+            d = CardDetection(detection_id=f"f_{i}", bbox=(50 + i * 40, 50, 36, 50), polygon=[], detection_confidence=0.98)
+            d.card = c
+            d.confidence = 0.98
+            d.is_verified = True
+            d.is_reference_match = False
+            d.is_uncertain = False
+            dets_foul.append(d)
+        for i, c in enumerate(c_mid_weak):
+            d = CardDetection(detection_id=f"m_{i}", bbox=(50 + i * 40, 120, 36, 50), polygon=[], detection_confidence=0.98)
+            d.card = c
+            d.confidence = 0.98
+            d.is_verified = True
+            d.is_reference_match = False
+            d.is_uncertain = False
+            dets_foul.append(d)
+        for i, c in enumerate(c_back_weak):
+            d = CardDetection(detection_id=f"b_{i}", bbox=(50 + i * 40, 190, 36, 50), polygon=[], detection_confidence=0.98)
+            d.card = c
+            d.confidence = 0.98
+            d.is_verified = True
+            d.is_reference_match = False
+            d.is_uncertain = False
+            dets_foul.append(d)
+
+        with patch("app.ui.components.multi_window_widget.ScreenCapture.capture_window_by_id", return_value=mock_img), \
+             patch("app.ui.components.multi_window_widget.recognize_cards_pipeline", return_value=(dets_foul, None)):
+            
+            foul_flagged = False
+            def on_foul_done(success, msg):
+                nonlocal foul_flagged
+                foul_flagged = True
+                assert success is False
+                assert "binh lủng" in msg.lower() or "cảnh báo" in msg.lower()
+
+            widget._verify_post_binh_result(1, None, on_done_callback=on_foul_done)
+            assert foul_flagged is True
+            assert "CẢNH BÁO HẬU KIỂM" in panel.lbl_status.text()
+
+        widget.close()
+
+    def test_round_timing_controls_and_cooldown_countdown_lockdown(self, qapp):
+        """Verifies round duration and cooldown controls, countdown timer decrement, and hard lockdown."""
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+        from app.core.card import Card, Rank, Suit
+        from app.vision.card_detector import CardDetection
+
+        widget = MultiWindowWidget()
+        panel = widget.panels[1]
+
+        # 1. Verify default values of timing inputs
+        assert widget.spin_round_time.value() == 45
+        assert widget.spin_cooldown.value() == 20
+        assert widget.window_cooldown_remaining[1] == 0
+        assert widget.chk_auto_game_timing.isChecked() is True
+
+        # Switch to manual timer countdown mode for testing countdown mechanism
+        widget.chk_auto_game_timing.setChecked(False)
+        assert widget.spin_round_time.isEnabled() is True
+        assert widget.spin_cooldown.isEnabled() is True
+
+        # Change timing configuration
+        widget.spin_round_time.setValue(30)
+        widget.spin_cooldown.setValue(15)
+
+        # 2. Simulate hand sorted and entering post-round cooldown
+        cards = [Card(Rank(r), Suit.HEARTS) for r in range(2, 15)]
+        dets = [
+            CardDetection(detection_id=f"c_{i}", bbox=(50 + i * 20, 50, 40, 60), polygon=[], detection_confidence=0.95)
+            for i in range(13)
+        ]
+        for d, c in zip(dets, cards):
+            d.card = c
+        panel.last_detected_cards = dets
+
+        widget.window_round_start_times[1] = 0.0  # reset start
+        widget._finalize_round_and_lockdown(1, panel)
+
+        # Cooldown must be active (at least spin_cooldown 15s)
+        assert widget.window_cooldown_remaining[1] >= 15
+        assert panel.btn_auto_binh.isEnabled() is False
+        assert "Chờ ván mới" in panel.btn_auto_binh.text()
+        assert "Khóa đợi ván mới" in panel.lbl_status.text()
+
+        # 3. Verify hard lockdown: _start_auto_binh_for_window must reject execution
+        rejected = False
+        def on_attempt(success, msg):
+            nonlocal rejected
+            if not success:
+                rejected = True
+        widget._start_auto_binh_for_window(1, on_done_callback=on_attempt)
+        assert rejected is True
+
+        # 4. Verify 1Hz countdown tick decrements time remaining
+        initial_rem = widget.window_cooldown_remaining[1]
+        widget._on_cooldown_tick()
+        assert widget.window_cooldown_remaining[1] == initial_rem - 1
+
+        # 5. Verify manual unlock resets lockdown immediately
+        widget._unlock_all_cooldowns()
+        assert widget.window_cooldown_remaining[1] == 0
+        assert "Tự Động Binh Bài" in panel.btn_auto_binh.text()
+        widget.close()
+
+    def test_table_must_be_cleared_before_new_round(self, qapp):
+        """Verifies that table cleared state (< 6 cards) is strictly required between rounds before a new round can be declared."""
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+        from app.core.card import Card, Rank, Suit
+        from app.vision.card_detector import CardDetection
+        from app.vision.card_state import WindowCardState
+
+        widget = MultiWindowWidget()
+        panel = widget.panels[1]
+
+        cards = [Card(Rank(r), Suit.SPADES) for r in range(2, 15)]
+        dets = [
+            CardDetection(detection_id=f"c_{i}", bbox=(50 + i * 20, 50, 40, 60), polygon=[], detection_confidence=0.95)
+            for i in range(13)
+        ]
+        for d, c in zip(dets, cards):
+            d.card = c
+        state_13 = WindowCardState(window_id=1, detected_cards=dets, status="CONFIRMED_13")
+
+        # Simulate round completed
+        widget.last_binned_hashes[1] = "old_hash_123"
+        widget.has_seen_table_cleared[1] = False
+        widget.window_round_counters[1] = 5
+
+        # Even with 13 cards detected on screen, new round MUST NOT trigger because table hasn't cleared!
+        widget._on_frame_processed(1, state_13, None)
+        assert widget.window_round_counters[1] == 5  # Has not incremented
+
+        # Now simulate inter-round table clearing (< 6 cards visible on table)
+        empty_state = WindowCardState(window_id=1, detected_cards=[], status="EMPTY")
+        widget._on_frame_processed(1, empty_state, None)
+        assert widget.has_seen_table_cleared[1] is True
+        assert "Ván cũ đã dọn" in panel.lbl_status.text()
+
+        # Now when 13 new cards are dealt across 2 stable frames, new round triggers!
+        widget._on_frame_processed(1, state_13, None)
+        widget._on_frame_processed(1, state_13, None)
+        assert widget.window_round_counters[1] == 6  # Successfully advanced to round 6!
+        assert "Ván mới #6" in panel.lbl_status.text()
+        widget.close()
+
+    def test_auto_game_rhythm_mode_triggers_without_timer_delay(self, qapp):
+        """Verifies real-time game rhythm mode: triggers new round immediately after settlement without rigid timer wait."""
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+        from app.core.card import Card, Rank, Suit
+        from app.vision.card_detector import CardDetection
+        from app.vision.card_state import WindowCardState
+
+        widget = MultiWindowWidget()
+        panel = widget.panels[1]
+
+        assert widget.chk_auto_game_timing.isChecked() is True
+
+        # 1. Round 1 finishes
+        cards_r1 = [Card(Rank(r), Suit.HEARTS) for r in range(2, 15)]
+        dets_r1 = [
+            CardDetection(detection_id=f"c1_{i}", bbox=(50 + i * 20, 50, 40, 60), polygon=[], detection_confidence=0.95)
+            for i in range(13)
+        ]
+        for d, c in zip(dets_r1, cards_r1):
+            d.card = c
+        state_r1 = WindowCardState(window_id=1, detected_cards=dets_r1, status="CONFIRMED_13")
+        widget._on_frame_processed(1, state_r1, None)
+        widget._on_frame_processed(1, state_r1, None)
+        assert widget.window_round_counters[1] == 1
+
+        panel.last_detected_cards = dets_r1
+        widget._finalize_round_and_lockdown(1, panel)
+
+        # In auto game mode, window_cooldown_remaining MUST be 0 (no rigid waiting!)
+        assert widget.window_cooldown_remaining[1] == 0
+        assert "Chờ game tính tiền" in panel.btn_auto_binh.text()
+        assert "theo dõi game so bài & cộng tiền" in panel.lbl_status.text()
+
+        # 2. Game settles payout and clears table (< 10 cards)
+        empty_state = WindowCardState(window_id=1, detected_cards=[], status="EMPTY")
+        widget._on_frame_processed(1, empty_state, None)
+        assert widget.has_seen_table_cleared[1] is True
+        assert "tính tiền / dọn bàn xong" in panel.lbl_status.text()
+        assert "Đang chờ chia bài mới" in panel.btn_auto_binh.text()
+
+        # 3. Game deals Round 2 (13 brand-new cards with different hash)
+        cards_r2 = [Card(Rank(r), Suit.SPADES) for r in range(2, 15)]
+        dets_r2 = [
+            CardDetection(detection_id=f"c2_{i}", bbox=(50 + i * 20, 50, 40, 60), polygon=[], detection_confidence=0.95)
+            for i in range(13)
+        ]
+        for d, c in zip(dets_r2, cards_r2):
+            d.card = c
+        state_r2 = WindowCardState(window_id=1, detected_cards=dets_r2, status="CONFIRMED_13")
+
+        # 2 stable frames -> immediately triggers round 2 without any timer countdown!
+        widget._on_frame_processed(1, state_r2, None)
+        widget._on_frame_processed(1, state_r2, None)
+
+        assert widget.window_round_counters[1] == 2
+        assert "Phát hiện Ván mới #2" in panel.lbl_status.text()
+        assert panel.btn_auto_binh.isEnabled() is True
+        assert "Tự Động Binh Bài (Ván #2)" in panel.btn_auto_binh.text()
+        widget.close()
+
+    def test_qthread_cleanup_no_abort(self, qapp):
+        """Verifies clean shutdown and destruction of QThread workers and timers without exit 134 crash."""
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+
+        widget = MultiWindowWidget()
+        assert widget._cooldown_timer.isActive() is True
+
+        # Close widget
+        widget.close()
+        assert widget._cooldown_timer.isActive() is False
+        assert len(widget._auto_binh_workers) == 0
+
+
+
 
 
 

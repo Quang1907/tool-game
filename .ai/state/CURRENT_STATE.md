@@ -1,7 +1,7 @@
 # CURRENT STATE — BINH 13 ANALYZER (macOS)
 
-**Cập nhật lần cuối:** 2026-10-31  
-**Trạng thái kiểm thử:** 149/149 tests PASSED (100%)  
+**Cập nhật lần cuối:** 2026-11-11  
+**Trạng thái kiểm thử:** 167/167 tests PASSED (100%)  
 **Môi trường thực thi:** Python 3.11.17 (`.venv`), macOS Sequoia 15.4.1 (ARM64 Apple Silicon)
 
 ---
@@ -19,9 +19,10 @@
 | **Vision Pipeline** | `image_preprocessor.py` (Warp 120x168, green border)       | `VERIFIED` | `test_vision.py` passed                                |
 | **Vision Pipeline** | `card_detector.py` (Candidate validation, NMS, Fanned)     | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
 | **Vision Pipeline** | `card_recognizer.py` (Decoupled Rank/Suit matching)        | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
+| **Vision Pipeline** | `layout_analyzer.py` (Bố cục 3-5-5, Khôi phục & Khử trùng) | `VERIFIED` | `test_layout_355.py` (7 tests passed)                  |
 | **Vision Pipeline** | `template_engine.py` (Topological loop & Rank analysis)    | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
 | **Vision Pipeline** | `card_reference_library.py` (SQLite Ground-truth)          | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
-| **Vision Pipeline** | `roi_manager.py` & `window_manager.py` (3 Windows)         | `VERIFIED` | `test_multi_window.py` (7 tests passed)                |
+| **Vision Pipeline** | `roi_manager.py` & `window_manager.py` (3 Windows)         | `VERIFIED` | `test_multi_window.py` (13 tests passed)               |
 | **Automation**      | `mouse_controller.py` (macOS CoreGraphics native events)   | `VERIFIED` | `test_auto_binh.py` passed                             |
 | **Automation**      | `gesture_selector.py` (Weighted random & Bézier generator) | `VERIFIED` | `test_auto_binh.py` passed                             |
 | **Automation**      | `move_planner.py` (Permutation cycles minimal swaps)       | `VERIFIED` | `test_auto_binh.py` passed                             |
@@ -30,9 +31,9 @@
 | **Database**        | `db.py` & `repository.py` (Sessions, Slots, Gestures CRUD) | `VERIFIED` | `test_database.py` & `test_auto_binh.py` passed        |
 | **Services**        | `analysis_service.py` & `simulation_service.py`            | `VERIFIED` | `test_integration.py` passed                           |
 | **Services**        | `multi_window_service.py` (Tracking & Hash cache)          | `VERIFIED` | `test_multi_window.py` passed                          |
-| **UI Layer**        | `main_window.py` (7 tabs, Tab 7 Tự động binh bài)          | `VERIFIED` | `test_ui.py` passed (7/7 tabs)                         |
+| **UI Layer**        | `main_window.py` (7 tabs, Tab 6 Chọn 1-3 Màn hình)        | `VERIFIED` | `test_ui.py` passed (7/7 tabs)                         |
 | **UI Layer**        | `gesture_widget.py` (Tab 7 13x13 Matrix, Slot Editor)      | `VERIFIED` | `test_auto_binh.py` passed                             |
-| **UI Layer**        | `multi_window_widget.py` (Nút Auto-Binh 3 cửa sổ)          | `VERIFIED` | `test_multi_window.py` passed                          |
+| **UI Layer**        | `multi_window_widget.py` (Chọn 1/2/3 màn hình chống rối)  | `VERIFIED` | `test_multi_window.py` & `test_auto_binh.py` passed   |
 | **UI Layer**        | `card_edit_dialog.py` (13 nút Rank, 4 Suit, Contradiction) | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
 | **UI Layer**        | `vision_debug_dialog.py` (4 tab chẩn đoán)                 | `VERIFIED` | `test_card_detection_and_reference.py` passed          |
 | **UI Layer**        | `zoomable_viewer.py` (Zoom, Pan, Click Bbox)               | `VERIFIED` | `test_ui.py` passed                                    |
@@ -42,13 +43,62 @@
 
 ## 2. NHỮNG GÌ VỪA ĐƯỢC TRIỂN KHAI VÀ HOÀN TẤT GẦN NHẤT
 
-1. **Triển khai toàn diện Tab 7 ("7. Tự động binh bài & Cử chỉ") và Bộ điều khiển kéo chuột 156 cặp vị trí bài:**
-   - **Quản lý 13 ô vị trí bài (`CardSlot`):** Chuẩn hóa tọa độ tương đối theo kích thước cửa sổ game $[0.0, 1.0]$. Hỗ trợ hộp thoại `SlotEditorDialog` chỉnh sửa trực quan tọa độ 3 Chi (3 Chi Đầu, 5 Chi Giữa, 5 Chi Cuối) và tự động lưu bền vững vào SQLite `data.db`.
-   - **Quản lý ma trận 156 cặp vị trí có hướng ($13 \times 12$):** Bảng hiển thị 13x13 tương tác trực tiếp (`table_matrix`). Mỗi ô thể hiện số lượng mẫu cử chỉ đã lưu, gắn nhãn xanh `#30D158` nếu đã kiểm tra và xanh lam `#64D2FF` nếu chưa kiểm tra. Hỗ trợ xem chi tiết, test phát lại, đổi tên, thay đổi trọng số, nhân bản và xóa mẫu.
-   - **Bộ chọn mẫu ngẫu nhiên (`GestureSelector`):** Hỗ trợ chọn ngẫu nhiên có trọng số (`weighted random`), lọc chỉ dùng mẫu đã kiểm tra, tránh lặp lại mẫu liên tiếp và cấu hình tốc độ kéo chuột / thời gian nghỉ giữa các lượt.
-   - **Tự động sinh 156 đường cong Bézier tự nhiên:** Hàm `generate_natural_bezier_sample` sinh đường cong mượt mà theo thuật toán Cubic Bézier kèm gia tốc tự nhiên (Cubic ease-in-out) và độ rung vi mô mô phỏng tay người, giúp người dùng lập tức có đủ 156 mẫu chuẩn ngay lần đầu mở ứng dụng.
-   - **Ghi macro chuột thực tế (`MacroRecorder`):** Bắt sự kiện chuột qua `CGEventSourceButtonState` và `QCursor.pos()` ở tần số 60 Hz, ghi nhận đường đi thực tế khi người dùng kéo thả trên cửa sổ game và chuẩn hóa về tọa độ tương đối.
-   - **Lập kế hoạch hoán đổi tối ưu (`MovePlanner`):** Phân tích 13 quân bài hiện tại trên các ô bàn chơi so với thế bài tối ưu được giải bởi `Solver` $\rightarrow$ phân rã thành các chu trình hoán đổi tối thiểu (Disjoint Permutation Cycles), đảm bảo đưa 13 lá về đúng vị trí với số lượt kéo chuột ít nhất.
-   - **Điều khiển chuột macOS native (`MouseController`):** Sử dụng `CoreGraphics` CGEvents qua `ctypes`, chuyển đổi tọa độ tương đối sang tọa độ màn hình thực tế, tích hợp cơ chế ngắt an toàn khẩn cấp (Failsafe) khi chuột di chuyển vào góc $(0, 0)$.
-   - **Tích hợp Tab 6 ("Bot 3 Cửa Sổ"):** Bổ sung nút bấm `"⚡ Tự Động Binh Bài (Auto-Binh)"` trên từng panel cửa sổ. Khi đã phát hiện đủ 13 lá và có thế bài tối ưu, người dùng bấm nút này để hệ thống tự động kéo xếp bài trên cửa sổ game chạy ngầm trên `QThread` (`AutoBinhWorker`) mà không gây đơ lag giao diện.
-   - **Kiểm thử tự động toàn diện:** Viết mới file `tests/test_auto_binh.py` gồm 8 test case kiểm tra Model, Database, MovePlanner, Selector, Bézier, MouseController và UI. Nâng tổng số test toàn dự án lên **138/138 PASSED (100%)**.
+1. **Triển khai Tính năng Chọn 1, 2 hoặc 3 Màn hình & Tối ưu Giao diện Chống Rối Mắt (Anti-Clutter Screen Selector):**
+   - **Màn hình Lựa chọn Ban đầu (`ScreenSelectionWidget`):**
+     - Khi mở Tab 6, hệ thống hiển thị màn hình chọn số lượng màn hình trực quan với 3 Card thiết kế chuẩn macOS HIG:
+       - **1 Màn hình:** Chế độ tập trung 1 bàn duy nhất, phóng to hình ảnh tối đa, ẩn toàn bộ khung thừa chống rối mắt.
+       - **2 Màn hình:** Giao diện chia đôi 50/50 cân đối, tự động binh luân phiên 2 bàn, ẩn bàn 3 và bảng đối thủ.
+       - **3 Màn hình:** Chế độ tối đa 3 bàn, tự động suy luận 13 lá đối thủ #4 và tối ưu hóa thế bài bắt sập.
+     - Sau khi người dùng nhấn chọn số màn hình tương ứng, giao diện Dashboard làm việc mới xuất hiện theo đúng lựa chọn.
+   - **Tối ưu hóa Giao diện Dashboard Theo Số Màn Hình Đã Chọn:**
+     - **Chế độ 1 Màn hình:**
+       - Tự động ẩn 2 combo box `Cửa sổ 2` và `Cửa sổ 3`.
+       - Mở rộng kích thước Panel 1 chiếm 100% chiều rộng, tăng chiều cao xem bài lên 240-340px giúp nhìn bài cực kỳ rõ nét.
+       - Tự động ẩn khung "Khắc chế đối thủ #4" trên Panel 1 và ẩn toàn bộ `OpponentDeductionPanel` ở đáy màn hình.
+       - Nút thao tác chuyển thành `▶ Bắt đầu quét 1 cửa sổ` và `⚡ Tự Động Binh Bài`.
+     - **Chế độ 2 Màn hình:**
+       - Tự động ẩn combo box `Cửa sổ 3`, hiển thị combo 1 & 2.
+       - Hiển thị Panel 1 và Panel 2 chia đôi 50/50, ẩn Panel 3.
+       - Ẩn khung đối thủ #4 vì 2 bàn không đủ 39 lá để suy luận đối thủ #4.
+       - Nút thao tác chuyển thành `▶ Bắt đầu quét 2 cửa sổ` và `⚡ Binh bài cả 2 bàn (Luân phiên)`.
+     - **Chế độ 3 Màn hình:**
+       - Hiển thị đầy đủ 3 combo box, 3 panels và bảng suy luận đối thủ #4.
+   - **Bộ Điều khiển Chuyển Đổi Nhanh trên Toolbar:**
+     - Nút `[ 🔙 Đổi số màn ]` cho phép quay lại màn hình chọn bất kỳ lúc nào.
+     - Cụm nút chuyển nhanh `[ 1 Màn ] [ 2 Màn ] [ 3 Màn ]` trên thanh công cụ cho phép đổi chế độ tức thời mà không cần rời khỏi màn hình làm việc.
+   - **Kiểm thử tự động:**
+     - Bổ sung 4 test case chuyên sâu trong `tests/test_multi_window.py`.
+     - Toàn bộ 166/166 test case dự án chạy thật và **PASSED 100%**.
+
+1. **Chuẩn hóa Bố cục Bài Binh 13 lá (3 - 5 - 5) & Thuật toán Phục hồi Lá bài Thiếu (`Layout355Analyzer`):**
+   - **Phân cụm 3 Chi tự động:** Chi 1 (3 lá), Chi 2 (5 lá), Chi 3 (5 lá) dựa trên tọa độ Y và phân bổ không gian.
+   - **Xác định vị trí lá bài bị thiếu (`infer_missing_slot_bboxes`):** Phân tích bước nhảy ngang $\Delta X$ và khoảng cách dọc $\Delta Y$, tính toán chính xác bounding box $(x, y, w, h)$ tại các khe hở nội tại (internal gap) hoặc vị trí biên (edge extrapolation).
+   - **Xác minh con bài thực tế trên bàn chơi (`verify_and_crop_missing_card`):** Cắt trực tiếp vùng bài từ frame ảnh, chạy Candidate Validation (tỷ lệ trắng/sáng $\ge 18\%$), loại bỏ nền nỉ xanh, không đoán mò hay ép tạo bài giả. Nhận diện độc lập Rank/Suit và phục hồi lá bài vào danh sách.
+   - **Khử trùng lặp và triệt tiêu đọc sai (`resolve_duplicate_cards`):** Khi phát hiện bài trùng lặp (ví dụ hai lá $7♣$), lá có độ tin cậy cao hơn giữ nguyên, lá còn lại được đối chiếu qua `alternative_candidates` và so khớp với 39 lá còn lại chưa xuất hiện trong bộ bài để gán lại chính xác.
+   - **Gán nhãn Slots 1..13:** Tự động đánh số thứ tự từ 1 đến 13 cho từng quân bài, tương thích tuyệt đối với `MovePlanner` và `Evaluator`.
+   - **Bảo toàn 100% kiểm thử:** Thêm mới `test_layout_355.py` (7 tests). Nâng tổng số test toàn dự án lên **162/162 tests PASSED (100%)** trong 35.73 giây.
+
+1. **Triển khai Bộ điều khiển Chu kỳ Ván bài (Round Timing) & Cơ chế Khóa cứng sau khi Binh (Post-Binh Cooldown Lockdown):**
+   - **Giao diện cấu hình Chu kỳ Ván bài:** Bổ sung thanh điều khiển `timing_bar` trên Tab 6 (Bot 3 Cửa Sổ) với:
+     - `spin_round_time`: `⏱ Thời gian ván:` (10s – 180s, mặc định `45s`), kiểm soát thời gian diễn ra 1 hiệp binh bài.
+     - `spin_cooldown`: `⏳ Thời gian chờ ván mới:` (5s – 120s, mặc định `20s`), kiểm soát thời gian game so bài, trả thưởng và dọn bàn.
+     - `btn_reset_wait`: Nút `"🔓 Mở khóa tất cả chờ"` cho phép người dùng mở khóa cưỡng chế ngay lập tức khi muốn thử nghiệm nhanh.
+   - **Cơ chế Khóa cứng Chuột 100% (Absolute Hard Lockdown):** Ngay sau khi hệ thống hoàn tất binh bài trên một bàn chơi:
+     - Tự động tính toán tổng thời gian khóa: `Total Lock = (Thời gian ván - Thời gian đã xếp) + Thời gian chờ`.
+     - Kích hoạt bộ đếm ngược thời gian thực `_cooldown_timer` (1Hz) cập nhật trạng thái trực quan: `⏳ ĐÃ BINH XONG VÁN #N — Khóa đợi ván mới (còn Xs)...` và nút bấm chuyển thành `⏳ Chờ ván mới (Xs)` ở trạng thái disabled.
+     - **Triệt tiêu hoàn toàn lỗi chuột kéo thả tiếp:** Trong suốt thời gian đếm ngược, hệ thống cấm 100% việc kích hoạt `_start_auto_binh_for_window`, loại bỏ bàn đó khỏi hàng đợi tự động `auto_loop_queue`.
+   - **Chặn Scanner phân tích trùng lặp khi đang kéo bài:** Trong lúc `is_auto_binh_executing` đang chạy hoặc bàn chơi đang trong thời gian đếm ngược `window_cooldown_remaining > 0`, các sự kiện `_on_frame_processed` và `_on_solution_found` sẽ bỏ qua việc phân tích/tính toán lại và không đẩy thêm lệnh vào hàng đợi, giữ nguyên vị trí bài đã xếp tối ưu.
+   - **Quy tắc Bắt buộc Dọn Bàn (Table Cleared Rule) trước khi nhận diện Ván mới:** Sau khi hết thời gian đếm ngược, hệ thống chỉ chấp nhận ván mới khi và chỉ khi đã chứng kiến bàn chơi được dọn sạch bài cũ (`len(valid_cards) < 6`), sau đó chia đủ 13 lá bài mới ổn định qua ít nhất 2 frame liên tiếp. Điều này triệt tiêu hoàn toàn nguy cơ quét nhầm lại bài cũ trong lúc game đang chiếu kết quả so bài.
+   - **Khắc phục triệt để lỗi giải phóng QThread (SIGABRT Exit 134):** Quản lý vòng đời `AutoBinhWorker` chuẩn mực, ngắt kết nối an toàn, chờ `wait(1000)` trước khi xóa bộ nhớ trong `closeEvent` và khi khởi tạo worker mới.
+   - **Kiểm thử tự động toàn diện:** Viết mới 3 test case chuyên sâu trong `tests/test_auto_binh.py`. Nâng tổng số test toàn dự án lên **155/155 tests PASSED (100%)** trong 29.85 giây.
+
+1. **Tự động nhận diện nhịp game thời gian thực (Auto Game Rhythm Detection Mode — Xóa bỏ thời gian chờ thủ công):**
+   - **Checkbox chế độ tự động:** Bổ sung `chk_auto_game_timing` (`⚡ Tự động theo nhịp game (Tự phát hiện cộng tiền xong & chia bài mới)`) trên thanh công cụ Tab 6 (bật mặc định). Tự động vô hiệu hóa các ô SpinBox thời gian đếm ngược và nút mở khóa để tránh thao tác thừa.
+   - **Event-Driven Payout & Clearing Detection:**
+     - Ngay sau khi binh xong, hệ thống không đặt thời gian chờ cố định để tránh làm mù scanner, mà chuyển sang theo dõi thời gian thực: `⏳ Đang theo dõi game so bài & cộng tiền...`.
+     - Khi game hiển thị hiệu ứng so bài, trả thưởng/cộng tiền và dọn bài cũ (`len(valid_cards) < 10`), hệ thống nhận diện `has_seen_table_cleared = True`, cập nhật trạng thái `⏳ Ván cũ đã dọn (Game đã tính tiền / dọn bàn xong) — Đang chờ chia bài ván mới...`.
+   - **Tự động kích hoạt ván mới & Binh ngay lập tức:**
+     - Khi 13 lá bài mới xuất hiện, hash bộ bài mới được tính toán bằng `CardStateManager.compute_position_invariant_hash(...)` và so khớp khác biệt với ván trước (`curr_hash != last_binned_hashes`).
+     - Bộ lọc Debounce ổn định $\ge 2$ frame liên tiếp loại bỏ hoàn toàn nhiễu giật hình khi lật bài.
+     - Hệ thống tự động nâng số thứ tự ván `#N`, cập nhật trạng thái `🎯 Phát hiện Ván mới #N! Đã nhận diện đủ 13 lá — Binh bài ngay!`, mở khóa nút `⚡ Tự Động Binh Bài (Ván #N)` và tự động đẩy vào hàng đợi `auto_loop_queue` để binh bài ngay lập tức khi bật chế độ Auto-Loop.
+   - **Kiểm thử tự động:** Thêm mới test case `test_auto_game_rhythm_mode_triggers_without_timer_delay` trong `tests/test_auto_binh.py`. Toàn bộ **167/167 tests PASSED (100%)**.

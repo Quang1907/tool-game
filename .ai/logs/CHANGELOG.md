@@ -2,6 +2,113 @@
 
 Tất cả các thay đổi đáng chú ý của dự án được ghi chép tại đây theo định dạng [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.4.1] — 2026-11-11
+
+### Added & Enhanced
+
+- **Tự động nhận diện nhịp game thời gian thực (Real-time Game Rhythm Auto-Detection) — Thay thế thời gian chờ thủ công ([multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py)):**
+  - **Tùy chọn Nhịp Game Tự Động (`chk_auto_game_timing`):**
+    - Bổ sung tùy chọn `⚡ Tự động theo nhịp game (Tự phát hiện cộng tiền xong & chia bài mới)` trên thanh công cụ Tab 6 (bật mặc định).
+    - Tự động làm mờ (disabled) các ô cấu hình thời gian đếm ngược (`spin_round_time`, `spin_cooldown`) và nút `[ 🔓 Mở khóa ]`, chuyển đổi hệ thống sang kiến trúc hướng sự kiện (Event-Driven) bám sát thị giác máy tính thay vì timer cứng.
+  - **Phát hiện Trạng thái Game Tính tiền / Gom bài cũ:**
+    - Sau khi hoàn thành binh bài một ván, hệ thống không đặt thời gian khóa cứng mù quáng (`window_cooldown_remaining = 0`), scanner camera tiếp tục phân tích frame bàn chơi liên tục trong nền.
+    - Khi animation so bài, cộng trừ chip hoàn tất và bài cũ được gom đi (`len(valid_cards) < 10`), hệ thống tự động ghi nhận cờ `has_seen_table_cleared = True`, cập nhật trạng thái trực quan: `⏳ Ván cũ đã dọn (Game đã tính tiền / dọn bàn xong) — Đang chờ chia bài ván mới...`.
+  - **Tự động kích hoạt Ván mới & Binh bài ngay lập tức:**
+    - Khi nhà cái chia xong 13 lá bài mới, hệ thống tính toán hash vị trí qua `CardStateManager.compute_position_invariant_hash(...)` và so khớp với hash ván trước (`curr_hash != last_binned_hashes`).
+    - Lọc Debounce ổn định $\ge 2$ frame liên tiếp loại bỏ hoàn toàn các khung hình lật bài trung gian.
+    - Tự động tăng số thứ tự ván `#N`, cập nhật trạng thái `🎯 Phát hiện Ván mới #N! Đã nhận diện đủ 13 lá — Binh bài ngay!`, kích hoạt nút `⚡ Tự Động Binh Bài (Ván #N)`.
+    - Ở chế độ Binh liên tục (`is_auto_loop_enabled`), ván bài được tự động đẩy vào hàng đợi và điều khiển chuột xếp bài ngay lập tức mà không cần bất kỳ thao tác thủ công nào từ người dùng.
+  - **Kiểm thử tự động:** Bổ sung test case `test_auto_game_rhythm_mode_triggers_without_timer_delay` trong [test_auto_binh.py](file:///Users/levanquang/tool/tests/test_auto_binh.py). Toàn bộ test suite **167/167 tests PASSED (100%)**.
+
+---
+
+## [1.4.0] — 2026-11-11
+
+### Added & Enhanced
+
+- **Chức năng Chọn 1 Màn Hình, 2 hoặc 3 Màn Hình & Tối ưu Giao diện Chống Rối Mắt ([multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py)):**
+  - **Màn hình Chọn Số Màn Hình Ban Đầu (`ScreenSelectionWidget` & `ScreenSelectionCard`):**
+    - Khi mở Tab 6, hệ thống hiển thị màn hình chọn ban đầu với 3 card trực quan chuẩn macOS HIG thay vì hiện ngay giao diện 3 bàn dày đặc gây rối mắt.
+    - Card 1: **1 Màn Hình (1 Bàn)** — Phóng to bài tối đa, tập trung 1 bàn duy nhất, ẩn toàn bộ khung thừa.
+    - Card 2: **2 Màn Hình (2 Bàn)** — Chia đôi 50/50 cân đối, tự động binh luân phiên 2 bàn, ẩn bàn 3 và bảng đối thủ.
+    - Card 3: **3 Màn Hình (3 Bàn)** — Giám sát 3 bàn cùng lúc, tự động suy luận 13 lá đối thủ #4 và tối ưu thế bài bắt sập.
+  - **Giao diện Dashboard Chống Rối Mắt Linh Hoạt (`_apply_screen_mode_layout`):**
+    - **Chế độ 1 Màn hình:** Tự động ẩn Combo 2 và Combo 3; Panel 1 chiếm 100% chiều rộng giao diện; phóng to viewer lên 240-340px; ẩn khung "Khắc chế đối thủ #4" và ẩn toàn bộ Opponent Deduction panel ở đáy; đổi nút thành `▶ Bắt đầu quét 1 cửa sổ` và `⚡ Tự Động Binh Bài`.
+    - **Chế độ 2 Màn hình:** Ẩn Combo 3; chia đôi 50/50 Panel 1 và 2; ẩn Panel 3 và Opponent Deduction panel; đổi nút thành `▶ Bắt đầu quét 2 cửa sổ` và `⚡ Binh bài cả 2 bàn (Luân phiên)`.
+    - **Chế độ 3 Màn hình:** Hiển thị đủ 3 combo, 3 panels và bảng suy luận đối thủ #4.
+  - **Thanh Công Cụ Chuyển Đổi Nhanh:**
+    - Nút `[ 🔙 Đổi số màn ]` quay lại màn hình lựa chọn ban đầu bất kỳ lúc nào.
+    - Cụm nút `[ 1 Màn ] [ 2 Màn ] [ 3 Màn ]` cho phép đổi chế độ tức thời mà không cần rời khỏi màn hình làm việc.
+  - **Kiểm thử tự động:** Bổ sung 4 test case chuyên sâu trong [test_multi_window.py](file:///Users/levanquang/tool/tests/test_multi_window.py). Toàn bộ test suite **166/166 tests PASSED (100%)** trong 36.86 giây.
+
+---
+
+## [1.3.9] — 2026-11-11
+
+### Added & Enhanced
+
+- **Chuẩn hóa Bố cục Bài Binh 13 lá (3 - 5 - 5) & Thuật toán Phục hồi Lá bài Thiếu ([layout_analyzer.py](file:///Users/levanquang/tool/app/vision/layout_analyzer.py)):**
+  - **Phân cụm 3 Chi tự động (`cluster_into_rows`):** Tự động gom nhóm các lá bài được phát hiện thành 3 hàng: Chi 1 (Chi Đầu: 3 lá), Chi 2 (Chi Giữa: 5 lá), Chi 3 (Chi Cuối: 5 lá) dựa trên tọa độ Y và phân bổ không gian.
+  - **Xác định vị trí hình học của lá bài còn thiếu (`infer_missing_slot_bboxes`):** Khi hệ thống quét thấy thiếu bài ($< 13$ lá), thuật toán phân tích bước nhảy ngang $\Delta X$, khoảng cách dọc $\Delta Y$, tính toán chính xác bounding box $(x, y, w, h)$ tại các khe hở nội tại (internal gap) hoặc vị trí biên (edge extrapolation).
+  - **Xác minh con bài thực tế trên bàn chơi (`verify_and_crop_missing_card`):** Cắt trực tiếp vùng bài từ frame ảnh, chạy Candidate Validation (tỷ lệ trắng/sáng $\ge 18\%$), loại bỏ nền nỉ xanh, không đoán mò hay ép tạo bài giả. Nhận diện độc lập Rank/Suit và phục hồi lá bài vào danh sách.
+  - **Khử trùng lặp và triệt tiêu đọc sai (`resolve_duplicate_cards`):** Khi phát hiện bài trùng lặp (ví dụ hai lá cùng nhận là $7♣$), lá có độ tin cậy cao hơn giữ nguyên, lá còn lại được đối chiếu qua `alternative_candidates` và so khớp với 39 lá còn lại chưa xuất hiện trong bộ bài để gán lại chính xác, đảm bảo 13 lá bài độc nhất 100%.
+  - **Gán nhãn Slots 1..13:** Tự động đánh số thứ tự từ 1 đến 13 cho từng quân bài, tương thích tuyệt đối với `MovePlanner` và `Evaluator`.
+  - **Tích hợp Pipeline Thống nhất ([vision_service.py](file:///Users/levanquang/tool/app/services/vision_service.py)):** Cả Tab 2 (Quét màn hình CV) và Tab 6 (Bot 3 Cửa Sổ) tự động áp dụng `Layout355Analyzer`, triệt tiêu hoàn toàn lỗi đọc thiếu hoặc đọc sai bài.
+  - **Nâng cấp Thẩm định Nhận diện ([recognition_validator.py](file:///Users/levanquang/tool/app/vision/recognition_validator.py)):** Bổ sung các trường `front_count`, `middle_count`, `back_count`, `is_layout_355_valid` vào `ValidationReport`, hiển thị trực quan tỷ lệ bài theo chuẩn 3-5-5.
+  - **Kiểm thử tự động toàn diện:** Viết mới test suite [test_layout_355.py](file:///Users/levanquang/tool/tests/test_layout_355.py) với 7 test case chuyên sâu. Nâng tổng số test toàn dự án lên **162/162 tests PASSED (100%)** trong 35.73 giây.
+
+---
+
+## [1.3.8] — 2026-10-31
+
+### Added & Fixed
+
+- **Bộ điều khiển Chu kỳ Ván bài & Thời gian Chờ (Round Timing & Cooldown Configuration) ([multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py)):**
+  - **Bổ sung thanh điều khiển `timing_bar` trên Tab 6 (Bot 3 Cửa Sổ):**
+    - `spin_round_time`: `⏱ Thời gian ván:` (QSpinBox 10s – 180s, mặc định `45s`), cho phép người dùng tùy chỉnh thời gian 1 hiệp xếp bài theo quy định game Rikvip.
+    - `spin_cooldown`: `⏳ Thời gian chờ ván mới:` (QSpinBox 5s – 120s, mặc định `20s`), cho phép người dùng tùy chỉnh thời gian nghỉ chờ game so bài 3 chi, trả thưởng và dọn bàn.
+    - `btn_reset_wait`: Nút bấm `"🔓 Mở khóa tất cả chờ"` cho phép mở khóa cưỡng chế ngay lập tức khi muốn thử nghiệm nhanh.
+- **Cơ chế Khóa cứng Chuột 100% sau khi Binh (Post-Binh Cooldown Lockdown) ([multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py)):**
+  - **Khắc phục lỗi chuột tiếp tục kéo thả:** Khi hoàn thành xếp bài, hệ thống tính toán thời gian khóa: `Total Lock = (Thời gian ván - Thời gian đã xếp) + Thời gian chờ`.
+  - Kích hoạt timer đếm ngược 1Hz (`_cooldown_timer`), hiển thị trực quan: `⏳ ĐÃ BINH XONG VÁN #N — Khóa đợi ván mới (còn Xs)...` và nút bấm chuyển sang `⏳ Chờ ván mới (Xs)` (disabled).
+  - Khóa chuột 100%, cấm gọi `_start_auto_binh_for_window` và dọn sạch hàng đợi `auto_loop_queue`.
+  - Trong suốt thời gian đếm ngược hoặc khi chuột đang di chuyển (`is_auto_binh_executing`), các sự kiện frame scanner `_on_frame_processed` và `_on_solution_found` sẽ ngắt sớm, không phân tích hay enqueue trùng lặp, bảo toàn nguyên vẹn kết quả bài đã xếp tối ưu.
+- **Quy tắc Bắt buộc Dọn Bàn (Table Cleared Rule) trước khi nhận diện Ván mới:**
+  - Sau khi hết thời gian đếm ngược, chỉ chấp nhận ván mới khi hệ thống đã ghi nhận bàn chơi được dọn sạch bài cũ (`len(valid_cards) < 6`), sau đó chia đủ 13 lá bài mới ổn định qua $\ge 2$ frame liên tiếp và có hash vị trí khác với ván trước.
+- **Khắc phục triệt để lỗi giải phóng QThread (SIGABRT Exit 134):**
+  - Thu dọn an toàn vòng đời `AutoBinhWorker`: ngắt kết nối signal, gọi `quit()`, `wait(1000)` và `deleteLater()` trước khi gán đè worker mới hoặc khi widget đóng `closeEvent`.
+- **Kiểm thử tự động toàn diện:**
+  - Viết mới 3 test case chuyên sâu trong [test_auto_binh.py](file:///Users/levanquang/tool/tests/test_auto_binh.py):
+    - `test_round_timing_controls_and_cooldown_countdown_lockdown`
+    - `test_table_must_be_cleared_before_new_round`
+    - `test_qthread_cleanup_no_abort`
+  - Toàn bộ test suite đạt **155/155 tests PASSED (100%)** trong 29.85s.
+
+---
+
+## [1.3.7] — 2026-10-31
+
+### Fixed & Security Hardening
+
+- **Khắc phục lỗi nhận diện bỏ sót quân bài 7 do dính hàng ([card_detector.py](file:///Users/levanquang/tool/app/vision/card_detector.py)):**
+  - **Nguyên nhân gốc rễ:** Phát hiện `MORPH_CLOSE` (Dilation theo sau Erosion) với kernel chữ nhật 3x3 đã hàn liền các khe rãnh nhỏ (1-2px) giữa hàng Chi 1 và hàng Chi 2, tạo thành contour đa hàng khổng lồ nuốt mất quân 7 Chuồn (`7c`).
+  - **Giải pháp:** Chuyển sang sử dụng `MORPH_OPEN` đơn thuần, bảo toàn rãnh phân cách giữa các hàng bài, nhận diện chính xác và đầy đủ 13/13 lá bài độc lập.
+- **Khóa an toàn chống binh thủng (Anti-Foul Hard Safety Guard) ([multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py)):**
+  - **Bổ sung `WindowPanel.clear_solution`:** Khi phát hiện khác 13 lá, hệ thống lập tức xóa sạch `last_partition = None`, vô hiệu hóa nút Auto-Binh, xóa trắng các label 3 Chi và hiển thị cảnh báo đỏ rực: `⛔ Phát hiện: X/13 lá — KHÓA BINH CHỐNG BINH LỦNG`. Cấm tuyệt đối việc sử dụng thế bài cũ của ván trước.
+  - **Thẩm định thế bài kép:** Trong `_start_auto_binh_for_window`, bắt buộc kiểm tra `len(detected_cards) == 13` và thẩm định thế bài qua `Evaluator.is_foul(f, m, b)`. Nếu phát hiện bài bị lủng chi, lập tức hủy thao tác và cảnh báo khẩn cấp, bảo vệ an toàn tuyệt đối cho người chơi.
+- **Quy trình Hậu kiểm tra sau khi binh (Post-Binh Verification Workflow) ([multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py)):**
+  - Tự động tạm dừng 450ms sau khi hoàn tất chuỗi thao tác chuột để game ổn định hoạt ảnh.
+  - Tự động chụp lại frame màn hình bàn chơi và chạy pipeline nhận diện để kiểm tra lại 13 lá bài ở 3 Chi.
+  - Đánh giá luật Mậu Binh: Chi Đầu $\le$ Chi Giữa $\le$ Chi Cuối. Báo cáo trực quan `✅ ĐÃ HẬU KIỂM: 3 Chi chuẩn luật 100% không lủng` hoặc cảnh báo nếu phát hiện bất thường.
+- **Phòng vệ thuộc tính hiển thị ([zoomable_viewer.py](file:///Users/levanquang/tool/app/ui/components/zoomable_viewer.py)):**
+  - Truy cập an toàn qua `getattr` cho `is_verified`, `is_reference_match`, `is_uncertain`, và `confidence`, loại bỏ triệt để nguy cơ `AttributeError`.
+- **Kiểm thử tự động:**
+  - Bổ sung 3 test case mới:
+    - `test_tightly_spaced_13_cards_table_detection_with_rank_7` trong [test_vision.py](file:///Users/levanquang/tool/tests/test_vision.py).
+    - `test_strict_13_cards_safety_guard_prevents_foul_auto_binh` trong [test_auto_binh.py](file:///Users/levanquang/tool/tests/test_auto_binh.py).
+    - `test_post_binh_verification_legal_and_foul_detection` trong [test_auto_binh.py](file:///Users/levanquang/tool/tests/test_auto_binh.py).
+  - Toàn bộ test suite đạt **152/152 tests PASSED (100%)** trong 32.15s.
+
 ---
 
 ## [1.3.6] — 2026-10-31

@@ -14,6 +14,12 @@ from app.vision.card_reference_library import (
 from app.vision.roi_manager import ROIManager, WindowROI
 from app.vision.window_manager import WindowManager, WindowItem
 from app.vision.card_state import CardStateManager, WindowCardState
+from app.vision.layout_analyzer import (
+    Layout355Analyzer,
+    LayoutVerificationReport,
+    LayoutRow,
+    MissingSlotInfo,
+)
 
 __all__ = [
     "ScreenCapture",
@@ -38,4 +44,8 @@ __all__ = [
     "WindowItem",
     "CardStateManager",
     "WindowCardState",
+    "Layout355Analyzer",
+    "LayoutVerificationReport",
+    "LayoutRow",
+    "MissingSlotInfo",
 ]
