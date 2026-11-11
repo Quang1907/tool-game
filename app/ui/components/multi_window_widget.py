@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
@@ -58,77 +59,139 @@ class SingleWindowPanel(QGroupBox):
         self.last_partition: Optional[HandArrangement] = None
         self.last_detected_cards: List[Any] = []
         self.last_frame: Optional[np.ndarray] = None
+        self.setStyleSheet("""
+            QGroupBox {
+                background-color: #1A1A1D;
+                border: 1px solid #28282C;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding: 6px 8px 8px 8px;
+                font-weight: 700;
+                font-size: 12px;
+                color: #64D2FF;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 10px;
+                padding: 0 4px;
+                background-color: #1A1A1D;
+            }
+        """)
         self._init_ui()
 
     def _init_ui(self) -> None:
+        self.setMinimumWidth(200)
         layout = QVBoxLayout(self)
-        layout.setSpacing(6)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+        layout.setContentsMargins(6, 4, 6, 6)
 
         # Header status badge
         header = QHBoxLayout()
+        header.setSpacing(6)
+        header.setContentsMargins(0, 0, 0, 0)
+
         self.lbl_status = QLabel("Chưa kết nối")
         self.lbl_status.setStyleSheet("color: #8E8E93; font-weight: 600; font-size: 11px;")
-        header.addWidget(self.lbl_status)
-        header.addStretch()
+        self.lbl_status.setWordWrap(True)
+        header.addWidget(self.lbl_status, 1)
 
         self.lbl_round_badge = QLabel("Ván: —")
         self.lbl_round_badge.setStyleSheet(
             "color: #8E8E93; font-weight: bold; font-size: 11px; background: rgba(142,142,147,0.15); padding: 2px 6px; border-radius: 4px;"
         )
-        header.addWidget(self.lbl_round_badge)
+        header.addWidget(self.lbl_round_badge, 0)
         layout.addLayout(header)
 
         # Live Image Viewer
         self.viewer = ZoomableImageViewer()
-        self.viewer.setMinimumHeight(180)
-        self.viewer.setMaximumHeight(240)
+        self.viewer.setMinimumHeight(115)
+        self.viewer.setMaximumHeight(185)
+        self.viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(self.viewer)
 
         # Detected Cards Scroll Area
-        lbl_detected = QLabel("Lá bài phát hiện:")
-        lbl_detected.setStyleSheet("font-size: 11px; color: #8E8E93;")
-        layout.addWidget(lbl_detected)
-
         self.scroll_cards = QScrollArea()
-        self.scroll_cards.setFixedHeight(85)
+        self.scroll_cards.setFixedHeight(62)
         self.scroll_cards.setWidgetResizable(True)
-        self.scroll_cards.setStyleSheet("background: #141414; border: none; border-radius: 4px;")
+        self.scroll_cards.setStyleSheet("background: #141416; border: 1px solid #222225; border-radius: 4px;")
+        self.scroll_cards.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_cards.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.cards_container = QWidget()
         self.cards_layout = QHBoxLayout(self.cards_container)
-        self.cards_layout.setSpacing(4)
-        self.cards_layout.setContentsMargins(4, 4, 4, 4)
+        self.cards_layout.setSpacing(2)
+        self.cards_layout.setContentsMargins(3, 2, 3, 2)
         self.scroll_cards.setWidget(self.cards_container)
         layout.addWidget(self.scroll_cards)
 
         # Recommendation / Solver Result Area
         self.box_solution = QGroupBox("Gợi ý xếp bài tối ưu")
-        self.box_solution.setStyleSheet("font-size: 11px;")
+        self.box_solution.setStyleSheet("""
+            QGroupBox {
+                background-color: #151518;
+                border: 1px solid #242428;
+                border-radius: 6px;
+                margin-top: 4px;
+                padding: 4px 6px;
+                font-size: 11px;
+                font-weight: 600;
+                color: #A0A0A0;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 6px;
+                padding: 0 4px;
+                background-color: #151518;
+            }
+        """)
         sol_layout = QVBoxLayout(self.box_solution)
-        sol_layout.setSpacing(4)
-        sol_layout.setContentsMargins(6, 6, 6, 6)
+        sol_layout.setSpacing(2)
+        sol_layout.setContentsMargins(4, 3, 4, 3)
 
         self.lbl_chi_front = QLabel("Chi Đầu (3 lá): —")
         self.lbl_chi_middle = QLabel("Chi Giữa (5 lá): —")
         self.lbl_chi_back = QLabel("Chi Cuối (5 lá): —")
 
+        self.lbl_chi_front.setStyleSheet("font-size: 11px; font-weight: 600; color: #64D2FF;")
+        self.lbl_chi_middle.setStyleSheet("font-size: 11px; font-weight: 600; color: #FF9F0A;")
+        self.lbl_chi_back.setStyleSheet("font-size: 11px; font-weight: 600; color: #30D158;")
+
         for lbl in (self.lbl_chi_front, self.lbl_chi_middle, self.lbl_chi_back):
-            lbl.setStyleSheet("font-size: 12px; font-weight: 600;")
+            lbl.setWordWrap(True)
             sol_layout.addWidget(lbl)
 
         layout.addWidget(self.box_solution)
 
         # Matchup / Counter-strategy box vs deduced 4th opponent
         self.box_vs_opp = QGroupBox("⚔️ Khắc chế đối thủ #4")
-        self.box_vs_opp.setStyleSheet("font-size: 11px;")
+        self.box_vs_opp.setStyleSheet("""
+            QGroupBox {
+                background-color: #161619;
+                border: 1px solid #28282C;
+                border-radius: 6px;
+                margin-top: 4px;
+                padding: 4px 6px;
+                font-size: 11px;
+                font-weight: 600;
+                color: #BF5AF2;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 6px;
+                padding: 0 4px;
+                background-color: #161619;
+            }
+        """)
         opp_box_layout = QVBoxLayout(self.box_vs_opp)
-        opp_box_layout.setSpacing(2)
-        opp_box_layout.setContentsMargins(6, 6, 6, 6)
+        opp_box_layout.setSpacing(1)
+        opp_box_layout.setContentsMargins(4, 3, 4, 3)
 
         self.lbl_opp_outcome = QLabel("Đang chờ đủ 3 cửa sổ...")
         self.lbl_opp_outcome.setStyleSheet("font-size: 11px; font-weight: 600; color: #8E8E93;")
+        self.lbl_opp_outcome.setWordWrap(True)
         self.lbl_opp_breakdown = QLabel("—")
         self.lbl_opp_breakdown.setStyleSheet("font-size: 10px; color: #A0A0A0;")
+        self.lbl_opp_breakdown.setWordWrap(True)
 
         opp_box_layout.addWidget(self.lbl_opp_outcome)
         opp_box_layout.addWidget(self.lbl_opp_breakdown)
@@ -136,8 +199,10 @@ class SingleWindowPanel(QGroupBox):
 
         # Auto-Binh Action Button
         self.btn_auto_binh = QPushButton("⚡ Tự Động Binh Bài (Auto-Binh)", objectName="PrimaryBtn")
-        self.btn_auto_binh.setStyleSheet("background-color: #30D158; color: white; font-weight: bold; border-radius: 6px; padding: 6px 12px;")
+        self.btn_auto_binh.setStyleSheet("background-color: #30D158; color: white; font-weight: bold; border-radius: 6px; padding: 4px 8px; font-size: 11px;")
         self.btn_auto_binh.setEnabled(False)
+        self.btn_auto_binh.setFixedHeight(30)
+        self.btn_auto_binh.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.btn_auto_binh.setToolTip("Tự động dùng chuột kéo xếp 13 lá bài theo thế bài tối ưu")
         self.btn_auto_binh.clicked.connect(lambda: self.auto_binh_clicked.emit(self.window_idx))
         layout.addWidget(self.btn_auto_binh)
@@ -149,11 +214,13 @@ class SingleWindowPanel(QGroupBox):
     def set_expanded_mode(self, expanded: bool) -> None:
         """Expands viewer height for single-screen focus mode."""
         if expanded:
-            self.viewer.setMinimumHeight(240)
-            self.viewer.setMaximumHeight(340)
-        else:
             self.viewer.setMinimumHeight(180)
-            self.viewer.setMaximumHeight(240)
+            self.viewer.setMaximumHeight(320)
+            self.scroll_cards.setFixedHeight(72)
+        else:
+            self.viewer.setMinimumHeight(115)
+            self.viewer.setMaximumHeight(185)
+            self.scroll_cards.setFixedHeight(62)
 
     def clear_solution(self) -> None:
         """Clears arrangement solution and locks Auto-Binh button to prevent misplays."""
@@ -204,8 +271,10 @@ class SingleWindowPanel(QGroupBox):
                 w.hide()
                 w.deleteLater()
 
+        card_w = 38 if hasattr(self, "viewer") and self.viewer.maximumHeight() > 200 else 30
+        card_h = 54 if hasattr(self, "viewer") and self.viewer.maximumHeight() > 200 else 44
         for det in state.detected_cards:
-            w = CardWidget(card=det.card, width=36, height=52, selectable=False)
+            w = CardWidget(card=det.card, width=card_w, height=card_h, selectable=False)
             self.cards_layout.addWidget(w)
         self.cards_layout.addStretch()
 
@@ -274,59 +343,63 @@ class OpponentDeductionPanel(QGroupBox):
         super().__init__("🎯 ĐỐI THỦ — NHÀ THỨ 4 (13 LÁ SUY LUẬN TỪ BỘ BÀI 52 CÂY)", parent)
         self.setStyleSheet("""
             QGroupBox {
-                background-color: #1A1A1C;
-                border: 1px solid #3A3A3C;
+                background-color: #17171A;
+                border: 1px solid #28282C;
                 border-radius: 8px;
-                font-weight: 600;
-                font-size: 12px;
-                margin-top: 10px;
-                padding-top: 10px;
+                font-weight: 700;
+                font-size: 11px;
+                margin-top: 6px;
+                padding: 6px 8px;
             }
             QGroupBox::title {
-                color: #FFD60A;
+                color: #BF5AF2;
                 subcontrol-origin: margin;
-                left: 12px;
+                left: 10px;
                 padding: 0 4px;
+                background-color: #17171A;
             }
         """)
         self._init_ui()
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setSpacing(6)
-        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
+        layout.setContentsMargins(8, 4, 8, 4)
 
         # Header status bar
         self.lbl_status = QLabel("Chưa phát hiện đủ bài: Hãy kết nối 3 cửa sổ game để hệ thống suy luận 13 lá đối thủ.")
-        self.lbl_status.setStyleSheet("font-size: 12px; font-weight: 600; color: #8E8E93;")
+        self.lbl_status.setStyleSheet("font-size: 11px; font-weight: 600; color: #8E8E93;")
+        self.lbl_status.setWordWrap(True)
         layout.addWidget(self.lbl_status)
 
         # Content split: Left (13 cards thumbnails), Right (Opponent 3-chi breakdown)
         content_layout = QHBoxLayout()
-        content_layout.setSpacing(16)
+        content_layout.setSpacing(12)
 
         # Left: Opponent Cards Scroll Area
         left_box = QVBoxLayout()
+        left_box.setSpacing(2)
         lbl_cards = QLabel("13 Quân bài đối thủ đang cầm (Loại trừ từ 3 cửa sổ):")
-        lbl_cards.setStyleSheet("font-size: 11px; color: #A0A0A0; font-weight: 500;")
+        lbl_cards.setStyleSheet("font-size: 10px; color: #A0A0A0; font-weight: 600;")
         left_box.addWidget(lbl_cards)
 
         self.scroll_cards = QScrollArea()
-        self.scroll_cards.setFixedHeight(65)
+        self.scroll_cards.setFixedHeight(56)
         self.scroll_cards.setWidgetResizable(True)
-        self.scroll_cards.setStyleSheet("background: #141414; border: 1px solid #2C2C2E; border-radius: 4px;")
+        self.scroll_cards.setStyleSheet("background: #141416; border: 1px solid #222225; border-radius: 4px;")
         self.cards_container = QWidget()
         self.cards_layout = QHBoxLayout(self.cards_container)
-        self.cards_layout.setSpacing(3)
-        self.cards_layout.setContentsMargins(4, 2, 4, 2)
+        self.cards_layout.setSpacing(2)
+        self.cards_layout.setContentsMargins(3, 2, 3, 2)
         self.scroll_cards.setWidget(self.cards_container)
         left_box.addWidget(self.scroll_cards)
         content_layout.addLayout(left_box, 3)
 
         # Right: Opponent optimal arrangement
         right_box = QVBoxLayout()
+        right_box.setSpacing(2)
         lbl_opp_sol = QLabel("Thế bài tối ưu nhất đối thủ sẽ xếp:")
-        lbl_opp_sol.setStyleSheet("font-size: 11px; color: #A0A0A0; font-weight: 500;")
+        lbl_opp_sol.setStyleSheet("font-size: 10px; color: #A0A0A0; font-weight: 600;")
         right_box.addWidget(lbl_opp_sol)
 
         self.lbl_chi_front = QLabel("Chi Đầu (3 lá): —")
@@ -335,6 +408,7 @@ class OpponentDeductionPanel(QGroupBox):
 
         for lbl in (self.lbl_chi_front, self.lbl_chi_middle, self.lbl_chi_back):
             lbl.setStyleSheet("font-size: 11px; font-weight: 600; color: #FFFFFF;")
+            lbl.setWordWrap(True)
             right_box.addWidget(lbl)
 
         content_layout.addLayout(right_box, 2)
@@ -345,11 +419,11 @@ class OpponentDeductionPanel(QGroupBox):
         self.lbl_status.setText(result.summary_message)
 
         if result.cross_duplicates:
-            self.lbl_status.setStyleSheet("font-size: 12px; font-weight: 600; color: #FF453A;")
+            self.lbl_status.setStyleSheet("font-size: 11px; font-weight: 600; color: #FF453A;")
         elif result.is_opponent_fully_deduced:
-            self.lbl_status.setStyleSheet("font-size: 12px; font-weight: 700; color: #30D158;")
+            self.lbl_status.setStyleSheet("font-size: 11px; font-weight: 700; color: #30D158;")
         else:
-            self.lbl_status.setStyleSheet("font-size: 12px; font-weight: 600; color: #FF9F0A;")
+            self.lbl_status.setStyleSheet("font-size: 11px; font-weight: 600; color: #FF9F0A;")
 
         # Update opponent cards
         while self.cards_layout.count():
@@ -361,7 +435,7 @@ class OpponentDeductionPanel(QGroupBox):
                 w.deleteLater()
 
         for card in result.remaining_cards:
-            w = CardWidget(card=card, width=32, height=48, selectable=False)
+            w = CardWidget(card=card, width=28, height=42, selectable=False)
             self.cards_layout.addWidget(w)
         self.cards_layout.addStretch()
 
@@ -405,12 +479,15 @@ class ScreenSelectionCard(QFrame):
         self, icon: str, title: str, subtitle: str, features: List[str], accent_color: str
     ) -> None:
         self.setObjectName("ScreenCard")
+        self.setMinimumWidth(200)
+        self.setMaximumWidth(400)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.setStyleSheet(f"""
             QFrame#ScreenCard {{
                 background-color: #1C1C1E;
                 border: 2px solid #2C2C2E;
                 border-radius: 12px;
-                padding: 14px;
+                padding: 10px;
             }}
             QFrame#ScreenCard:hover {{
                 border: 2px solid {accent_color};
@@ -420,40 +497,41 @@ class ScreenSelectionCard(QFrame):
         self.setCursor(Qt.PointingHandCursor)
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-        layout.setContentsMargins(16, 18, 16, 16)
+        layout.setSpacing(8)
+        layout.setContentsMargins(14, 14, 14, 14)
 
         # Icon
         lbl_icon = QLabel(icon)
         lbl_icon.setAlignment(Qt.AlignCenter)
-        lbl_icon.setStyleSheet("font-size: 38px; background: transparent; border: none;")
+        lbl_icon.setStyleSheet("font-size: 34px; background: transparent; border: none;")
         layout.addWidget(lbl_icon)
 
         # Title
         lbl_title = QLabel(title)
         lbl_title.setAlignment(Qt.AlignCenter)
-        lbl_title.setStyleSheet(f"font-size: 17px; font-weight: bold; color: {accent_color}; background: transparent; border: none;")
+        lbl_title.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {accent_color}; background: transparent; border: none;")
         layout.addWidget(lbl_title)
 
         # Subtitle
         lbl_sub = QLabel(subtitle)
         lbl_sub.setAlignment(Qt.AlignCenter)
+        lbl_sub.setWordWrap(True)
         lbl_sub.setStyleSheet("font-size: 11px; color: #8E8E93; background: transparent; border: none;")
         layout.addWidget(lbl_sub)
 
         # Divider
         divider = QFrame()
         divider.setFrameShape(QFrame.HLine)
-        divider.setStyleSheet("background-color: #2C2C2E; max-height: 1px; border: none; margin: 4px 0;")
+        divider.setStyleSheet("background-color: #2C2C2E; max-height: 1px; border: none; margin: 2px 0;")
         layout.addWidget(divider)
 
         # Features list
         features_box = QVBoxLayout()
-        features_box.setSpacing(6)
+        features_box.setSpacing(5)
         for feat in features:
             lbl_f = QLabel(feat)
             lbl_f.setWordWrap(True)
-            lbl_f.setStyleSheet("font-size: 11px; color: #D1D1D6; background: transparent; border: none; line-height: 1.3;")
+            lbl_f.setStyleSheet("font-size: 11px; color: #D1D1D6; background: transparent; border: none; line-height: 1.25;")
             features_box.addWidget(lbl_f)
         layout.addLayout(features_box)
 
@@ -468,7 +546,7 @@ class ScreenSelectionCard(QFrame):
                 font-size: 12px;
                 font-weight: bold;
                 border-radius: 8px;
-                padding: 10px 14px;
+                padding: 8px 12px;
                 border: none;
             }}
             QPushButton:hover {{
@@ -496,14 +574,14 @@ class ScreenSelectionWidget(QWidget):
 
     def _init_ui(self) -> None:
         outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(24, 20, 24, 20)
-        outer_layout.setSpacing(12)
+        outer_layout.setContentsMargins(16, 12, 16, 12)
+        outer_layout.setSpacing(10)
 
         outer_layout.addStretch(1)
 
         # Header Box
         header_box = QVBoxLayout()
-        header_box.setSpacing(6)
+        header_box.setSpacing(4)
 
         lbl_badge = QLabel("🎮 TÙY CHỌN GIAO DIỆN CHỐNG RỐI MẮT")
         lbl_badge.setAlignment(Qt.AlignCenter)
@@ -514,22 +592,23 @@ class ScreenSelectionWidget(QWidget):
 
         lbl_title = QLabel("BẠN MUỐN CHƠI / THEO DÕI MẤY MÀN HÌNH?")
         lbl_title.setAlignment(Qt.AlignCenter)
-        lbl_title.setStyleSheet("color: #FFFFFF; font-size: 21px; font-weight: 800;")
+        lbl_title.setStyleSheet("color: #FFFFFF; font-size: 19px; font-weight: 800;")
         header_box.addWidget(lbl_title)
 
         lbl_desc = QLabel(
             "Chọn số lượng bàn chơi bên dưới để hệ thống tối ưu hóa giao diện trực quan, loại bỏ hoàn toàn các khung thừa chống rối mắt:"
         )
         lbl_desc.setAlignment(Qt.AlignCenter)
+        lbl_desc.setWordWrap(True)
         lbl_desc.setStyleSheet("color: #8E8E93; font-size: 12px;")
         header_box.addWidget(lbl_desc)
 
         outer_layout.addLayout(header_box)
-        outer_layout.addSpacing(16)
+        outer_layout.addSpacing(12)
 
         # Cards Container
         cards_layout = QHBoxLayout()
-        cards_layout.setSpacing(16)
+        cards_layout.setSpacing(12)
 
         # Card 1: 1 Màn Hình
         self.card1 = ScreenSelectionCard(
@@ -592,7 +671,8 @@ class ScreenSelectionWidget(QWidget):
             "💡 Mẹo: Bạn có thể nhanh chóng đổi lại số màn hình (1, 2 hoặc 3) bất cứ lúc nào ngay trên thanh công cụ."
         )
         lbl_hint.setAlignment(Qt.AlignCenter)
-        lbl_hint.setStyleSheet("color: #636366; font-size: 11px; margin-top: 12px;")
+        lbl_hint.setWordWrap(True)
+        lbl_hint.setStyleSheet("color: #636366; font-size: 11px; margin-top: 10px;")
         outer_layout.addWidget(lbl_hint)
 
         outer_layout.addStretch(1)
@@ -661,15 +741,67 @@ class MultiWindowWidget(QWidget):
         self.stacked_widget = QStackedWidget(self)
         main_layout.addWidget(self.stacked_widget)
 
-        # Page 0: Screen Selection Landing Page (chống rối mắt)
-        self.selection_page = ScreenSelectionWidget(parent=self)
-        self.selection_page.screen_mode_selected.connect(self.set_screen_mode)
-        self.stacked_widget.addWidget(self.selection_page)
+        # Page 0: Screen Selection Landing Page (chống rối mắt, responsive scroll)
+        self.selection_scroll = QScrollArea(self)
+        self.selection_scroll.setWidgetResizable(True)
+        self.selection_scroll.setFrameShape(QFrame.NoFrame)
+        self.selection_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.selection_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.selection_scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
-        # Page 1: Main Dashboard Page
-        self.dashboard_page = QWidget(self)
+        self.selection_page = ScreenSelectionWidget(parent=self.selection_scroll)
+        self.selection_page.screen_mode_selected.connect(self.set_screen_mode)
+        self.selection_scroll.setWidget(self.selection_page)
+        self.stacked_widget.addWidget(self.selection_scroll)
+
+        # Page 1: Main Dashboard Page (responsive scrollable viewport)
+        self.dashboard_scroll = QScrollArea(self)
+        self.dashboard_scroll.setWidgetResizable(True)
+        self.dashboard_scroll.setFrameShape(QFrame.NoFrame)
+        self.dashboard_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.dashboard_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.dashboard_scroll.setStyleSheet("""
+            QScrollArea { background-color: transparent; border: none; }
+            QScrollBar:vertical {
+                background-color: #141416;
+                width: 8px;
+                margin: 0px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #3A3A3C;
+                min-height: 24px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #5E5CE6;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar:horizontal {
+                background-color: #141416;
+                height: 8px;
+                margin: 0px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:horizontal {
+                background-color: #3A3A3C;
+                min-width: 24px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background-color: #5E5CE6;
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+            }
+        """)
+
+        self.dashboard_page = QWidget(self.dashboard_scroll)
         self._init_dashboard_ui(self.dashboard_page)
-        self.stacked_widget.addWidget(self.dashboard_page)
+        self.dashboard_scroll.setWidget(self.dashboard_page)
+        self.stacked_widget.addWidget(self.dashboard_scroll)
 
         # Apply default layout for 3 screens internally so all child widgets are wired
         self._apply_screen_mode_layout(3)
@@ -680,118 +812,160 @@ class MultiWindowWidget(QWidget):
     def _init_dashboard_ui(self, container: QWidget) -> None:
         main_layout = QVBoxLayout(container)
         main_layout.setSpacing(8)
-        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setContentsMargins(8, 8, 8, 8)
 
-        # Top Control Bar
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(8)
+        # -------------------------------------------------------------
+        # Unified Glassmorphic Control Bar
+        # -------------------------------------------------------------
+        self.control_bar = QFrame(container)
+        self.control_bar.setObjectName("ControlBar")
+        self.control_bar.setStyleSheet("""
+            QFrame#ControlBar {
+                background-color: #1A1A1D;
+                border: 1px solid #28282B;
+                border-radius: 8px;
+            }
+        """)
+        bar_layout = QVBoxLayout(self.control_bar)
+        bar_layout.setContentsMargins(8, 6, 8, 6)
+        bar_layout.setSpacing(6)
 
-        # Screen Mode Controls
+        # Row 1: Mode Navigation & Window Setup
+        row1_layout = QHBoxLayout()
+        row1_layout.setSpacing(6)
+        row1_layout.setContentsMargins(0, 0, 0, 0)
+
         self.btn_back_to_selection = QPushButton("🔙 Đổi số màn", objectName="SecondaryBtn")
         self.btn_back_to_selection.setToolTip("Quay lại màn hình lựa chọn 1, 2 hoặc 3 màn hình")
-        self.btn_back_to_selection.setFixedHeight(28)
+        self.btn_back_to_selection.setFixedHeight(26)
         self.btn_back_to_selection.clicked.connect(self.reset_screen_selection)
-        toolbar.addWidget(self.btn_back_to_selection)
+        row1_layout.addWidget(self.btn_back_to_selection)
+
+        # Segmented Mode Controls
+        mode_frame = QFrame()
+        mode_frame.setStyleSheet("background-color: #141416; border: 1px solid #262628; border-radius: 6px;")
+        mode_box = QHBoxLayout(mode_frame)
+        mode_box.setContentsMargins(2, 2, 2, 2)
+        mode_box.setSpacing(2)
 
         self.btn_mode_1 = QPushButton("1 Màn")
-        self.btn_mode_1.setFixedHeight(28)
+        self.btn_mode_1.setFixedHeight(22)
         self.btn_mode_1.setToolTip("Chế độ 1 màn hình: Giao diện cực rộng, tập trung 1 bàn duy nhất")
         self.btn_mode_1.clicked.connect(lambda: self.set_screen_mode(1))
-        toolbar.addWidget(self.btn_mode_1)
+        mode_box.addWidget(self.btn_mode_1)
 
         self.btn_mode_2 = QPushButton("2 Màn")
-        self.btn_mode_2.setFixedHeight(28)
+        self.btn_mode_2.setFixedHeight(22)
         self.btn_mode_2.setToolTip("Chế độ 2 màn hình: Chia đôi cân đối 50/50, binh 2 bàn song song")
         self.btn_mode_2.clicked.connect(lambda: self.set_screen_mode(2))
-        toolbar.addWidget(self.btn_mode_2)
+        mode_box.addWidget(self.btn_mode_2)
 
         self.btn_mode_3 = QPushButton("3 Màn")
-        self.btn_mode_3.setFixedHeight(28)
+        self.btn_mode_3.setFixedHeight(22)
         self.btn_mode_3.setToolTip("Chế độ 3 màn hình: Tối đa 3 bàn + Tự động suy luận bài đối thủ #4")
         self.btn_mode_3.clicked.connect(lambda: self.set_screen_mode(3))
-        toolbar.addWidget(self.btn_mode_3)
+        mode_box.addWidget(self.btn_mode_3)
+
+        row1_layout.addWidget(mode_frame)
 
         sep_mode = QFrame()
         sep_mode.setFrameShape(QFrame.VLine)
-        sep_mode.setStyleSheet("color: #3A3A3C;")
-        toolbar.addWidget(sep_mode)
+        sep_mode.setStyleSheet("color: #333336;")
+        row1_layout.addWidget(sep_mode)
 
         self.btn_refresh_wins = QPushButton("🔄 Quét cửa sổ macOS", objectName="SecondaryBtn")
+        self.btn_refresh_wins.setFixedHeight(26)
         self.btn_refresh_wins.clicked.connect(self._refresh_window_list)
-        toolbar.addWidget(self.btn_refresh_wins)
+        row1_layout.addWidget(self.btn_refresh_wins)
 
         self.lbl_w1 = QLabel("Cửa sổ 1:")
         self.lbl_w1.setStyleSheet("font-weight: 600; font-size: 11px;")
-        toolbar.addWidget(self.lbl_w1)
+        row1_layout.addWidget(self.lbl_w1)
         self.combo_w1 = QComboBox()
+        self.combo_w1.setMinimumWidth(80)
+        self.combo_w1.setMaximumWidth(160)
+        self.combo_w1.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
         self.combo_w1.currentIndexChanged.connect(lambda: self._on_window_selected(1))
-        toolbar.addWidget(self.combo_w1)
+        row1_layout.addWidget(self.combo_w1)
 
         self.lbl_w2 = QLabel("Cửa sổ 2:")
         self.lbl_w2.setStyleSheet("font-weight: 600; font-size: 11px;")
-        toolbar.addWidget(self.lbl_w2)
+        row1_layout.addWidget(self.lbl_w2)
         self.combo_w2 = QComboBox()
+        self.combo_w2.setMinimumWidth(80)
+        self.combo_w2.setMaximumWidth(160)
+        self.combo_w2.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
         self.combo_w2.currentIndexChanged.connect(lambda: self._on_window_selected(2))
-        toolbar.addWidget(self.combo_w2)
+        row1_layout.addWidget(self.combo_w2)
 
         self.lbl_w3 = QLabel("Cửa sổ 3:")
         self.lbl_w3.setStyleSheet("font-weight: 600; font-size: 11px;")
-        toolbar.addWidget(self.lbl_w3)
+        row1_layout.addWidget(self.lbl_w3)
         self.combo_w3 = QComboBox()
+        self.combo_w3.setMinimumWidth(80)
+        self.combo_w3.setMaximumWidth(160)
+        self.combo_w3.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
         self.combo_w3.currentIndexChanged.connect(lambda: self._on_window_selected(3))
-        toolbar.addWidget(self.combo_w3)
+        row1_layout.addWidget(self.combo_w3)
 
-        self.btn_ref_manager = QPushButton("📚 Thư viện ảnh mẫu", objectName="SecondaryBtn")
+        self.btn_ref_manager = QPushButton("📚 Thư viện mẫu", objectName="SecondaryBtn")
+        self.btn_ref_manager.setFixedHeight(26)
         self.btn_ref_manager.setToolTip("Quản lý 52 lá bài và các ảnh mẫu đã xác nhận")
         self.btn_ref_manager.clicked.connect(self._open_reference_manager)
-        toolbar.addWidget(self.btn_ref_manager)
+        row1_layout.addWidget(self.btn_ref_manager)
 
-        toolbar.addStretch()
+        row1_layout.addStretch()
 
         self.lbl_fps = QLabel("FPS: —")
-        self.lbl_fps.setStyleSheet("color: #30D158; font-weight: 600; padding: 4px 8px; background: rgba(48,209,88,0.12); border-radius: 4px;")
-        toolbar.addWidget(self.lbl_fps)
+        self.lbl_fps.setStyleSheet("color: #30D158; font-weight: 700; font-size: 11px; padding: 2px 6px; background: rgba(48,209,88,0.12); border-radius: 4px;")
+        row1_layout.addWidget(self.lbl_fps)
+
+        bar_layout.addLayout(row1_layout)
+
+        # Row 2: Action Controls & Real-Time Automation Bar
+        row2_layout = QHBoxLayout()
+        row2_layout.setSpacing(6)
+        row2_layout.setContentsMargins(0, 0, 0, 0)
 
         self.btn_start = QPushButton("▶ Bắt đầu quét 3 cửa sổ")
-        self.btn_start.setFixedHeight(32)
+        self.btn_start.setFixedHeight(28)
         self.btn_start.clicked.connect(self._toggle_bot)
-        toolbar.addWidget(self.btn_start)
+        row2_layout.addWidget(self.btn_start)
 
         self.btn_auto_binh_all = QPushButton("⚡ Binh bài cả 3 bàn (Luân phiên)")
-        self.btn_auto_binh_all.setFixedHeight(32)
+        self.btn_auto_binh_all.setFixedHeight(28)
         self.btn_auto_binh_all.setStyleSheet(
-            "background-color: #5E5CE6; color: white; font-weight: bold; padding: 4px 12px; border-radius: 6px;"
+            "background-color: #5E5CE6; color: white; font-weight: bold; padding: 3px 10px; border-radius: 6px;"
         )
         self.btn_auto_binh_all.setToolTip(
             "Tự động luân phiên xếp bài trên các cửa sổ/tab đã chọn"
         )
         self.btn_auto_binh_all.clicked.connect(self._on_auto_binh_all_clicked)
-        toolbar.addWidget(self.btn_auto_binh_all)
+        row2_layout.addWidget(self.btn_auto_binh_all)
 
         self.btn_auto_loop = QPushButton("🔄 Tự động binh liên tục: TẮT")
-        self.btn_auto_loop.setFixedHeight(32)
+        self.btn_auto_loop.setFixedHeight(28)
         self.btn_auto_loop.setStyleSheet(
-            "background-color: #3A3A3C; color: #E5E5EA; font-weight: bold; padding: 4px 12px; border-radius: 6px;"
+            "background-color: #3A3A3C; color: #E5E5EA; font-weight: bold; padding: 3px 10px; border-radius: 6px;"
         )
         self.btn_auto_loop.setToolTip(
             "BẬT/TẮT chế độ tự động chạy liên tục: Tự động phát hiện ván bài mới và xếp bài liên tục ván này qua ván khác trên các bàn đã chọn"
         )
         self.btn_auto_loop.clicked.connect(self._toggle_auto_loop)
-        toolbar.addWidget(self.btn_auto_loop)
+        row2_layout.addWidget(self.btn_auto_loop)
 
         self.lbl_loop_counter = QLabel("Đã binh: 0 ván")
         self.lbl_loop_counter.setStyleSheet(
-            "color: #FF9F0A; font-weight: bold; font-size: 11px; padding: 4px 8px; background: rgba(255,159,10,0.12); border-radius: 4px;"
+            "color: #FF9F0A; font-weight: bold; font-size: 11px; padding: 2px 6px; background: rgba(255,159,10,0.12); border-radius: 4px;"
         )
-        toolbar.addWidget(self.lbl_loop_counter)
+        row2_layout.addWidget(self.lbl_loop_counter)
 
-        main_layout.addLayout(toolbar)
+        sep_action = QFrame()
+        sep_action.setFrameShape(QFrame.VLine)
+        sep_action.setStyleSheet("color: #333336;")
+        row2_layout.addWidget(sep_action)
 
-        # Second Bar: Game Round Timing & Cooldown Configuration
-        timing_bar = QHBoxLayout()
-        timing_bar.setSpacing(10)
-
-        self.chk_auto_game_timing = QCheckBox("⚡ Tự động theo nhịp game (Binh ngay khi có bài mới)")
+        self.chk_auto_game_timing = QCheckBox("⚡ Tự động theo nhịp game")
         self.chk_auto_game_timing.setChecked(True)
         self.chk_auto_game_timing.setToolTip(
             "Tự động nhận diện khi game tính toán + tiền xong và chia đủ 13 lá bài mới để tự động binh bài ngay lập tức, không cần chờ đếm lùi thời gian thủ công."
@@ -802,11 +976,16 @@ class MultiWindowWidget(QWidget):
             "QCheckBox::indicator:checked { background-color: #30D158; border: 1px solid #30D158; }"
         )
         self.chk_auto_game_timing.toggled.connect(self._on_auto_game_timing_toggled)
-        timing_bar.addWidget(self.chk_auto_game_timing)
+        row2_layout.addWidget(self.chk_auto_game_timing)
 
-        lbl_round_icon = QLabel("⏱ Thời gian ván:")
+        self.container_manual_timing = QWidget()
+        manual_layout = QHBoxLayout(self.container_manual_timing)
+        manual_layout.setContentsMargins(0, 0, 0, 0)
+        manual_layout.setSpacing(4)
+
+        lbl_round_icon = QLabel("⏱ Ván:")
         lbl_round_icon.setStyleSheet("color: #8E8E93; font-weight: 600; font-size: 11px;")
-        timing_bar.addWidget(lbl_round_icon)
+        manual_layout.addWidget(lbl_round_icon)
 
         self.spin_round_time = QSpinBox()
         self.spin_round_time.setRange(10, 180)
@@ -815,13 +994,13 @@ class MultiWindowWidget(QWidget):
         self.spin_round_time.setToolTip("Thời gian 1 hiệp binh bài của ván chơi trong game (khi tắt chế độ tự động theo nhịp game).")
         self.spin_round_time.setEnabled(False)
         self.spin_round_time.setStyleSheet(
-            "background-color: #2C2C2E; color: #64D2FF; font-weight: bold; padding: 2px 6px; border-radius: 4px; border: 1px solid #3A3A3C;"
+            "background-color: #242426; color: #64D2FF; font-weight: bold; padding: 1px 4px; border-radius: 4px; border: 1px solid #333336;"
         )
-        timing_bar.addWidget(self.spin_round_time)
+        manual_layout.addWidget(self.spin_round_time)
 
-        lbl_wait_icon = QLabel("⏳ Chờ ván mới:")
+        lbl_wait_icon = QLabel("⏳ Chờ:")
         lbl_wait_icon.setStyleSheet("color: #8E8E93; font-weight: 600; font-size: 11px;")
-        timing_bar.addWidget(lbl_wait_icon)
+        manual_layout.addWidget(lbl_wait_icon)
 
         self.spin_cooldown = QSpinBox()
         self.spin_cooldown.setRange(5, 120)
@@ -830,39 +1009,46 @@ class MultiWindowWidget(QWidget):
         self.spin_cooldown.setToolTip("Thời gian game so bài, trả thưởng và dọn bàn (khi tắt chế độ tự động theo nhịp game).")
         self.spin_cooldown.setEnabled(False)
         self.spin_cooldown.setStyleSheet(
-            "background-color: #2C2C2E; color: #FF9F0A; font-weight: bold; padding: 2px 6px; border-radius: 4px; border: 1px solid #3A3A3C;"
+            "background-color: #242426; color: #FF9F0A; font-weight: bold; padding: 1px 4px; border-radius: 4px; border: 1px solid #333336;"
         )
-        timing_bar.addWidget(self.spin_cooldown)
+        manual_layout.addWidget(self.spin_cooldown)
+
+        self.btn_reset_wait = QPushButton("🔓 Mở khóa", objectName="SecondaryBtn")
+        self.btn_reset_wait.setToolTip("Mở khóa cưỡng chế ngay lập tức nếu không muốn đợi hết thời gian chờ.")
+        self.btn_reset_wait.setFixedHeight(24)
+        self.btn_reset_wait.clicked.connect(self._unlock_all_cooldowns)
+        manual_layout.addWidget(self.btn_reset_wait)
+
+        row2_layout.addWidget(self.container_manual_timing)
+        self.container_manual_timing.setVisible(False)
 
         self.lbl_cooldown_summary = QLabel("Chế độ: Tự động theo nhịp game (Real-time)")
-        self.lbl_cooldown_summary.setStyleSheet("color: #32D74B; font-weight: bold; font-size: 11px; padding: 2px 8px;")
-        timing_bar.addWidget(self.lbl_cooldown_summary)
+        self.lbl_cooldown_summary.setStyleSheet("color: #32D74B; font-weight: bold; font-size: 11px; padding: 2px 6px;")
+        row2_layout.addWidget(self.lbl_cooldown_summary)
 
-        timing_bar.addStretch()
+        row2_layout.addStretch()
 
-        self.btn_reset_wait = QPushButton("🔓 Mở khóa tất cả chờ", objectName="SecondaryBtn")
-        self.btn_reset_wait.setToolTip("Mở khóa cưỡng chế ngay lập tức nếu không muốn đợi hết thời gian chờ.")
-        self.btn_reset_wait.setFixedHeight(26)
-        self.btn_reset_wait.clicked.connect(self._unlock_all_cooldowns)
-        timing_bar.addWidget(self.btn_reset_wait)
+        bar_layout.addLayout(row2_layout)
 
-        main_layout.addLayout(timing_bar)
+        main_layout.addWidget(self.control_bar)
 
-        # 3 Side-by-side or Grid Panels
-        grid = QGridLayout()
-        grid.setSpacing(10)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(2, 1)
+        # -------------------------------------------------------------
+        # Panels: Dynamic Responsive Grid
+        # -------------------------------------------------------------
+        self.grid_panels = QGridLayout()
+        self.grid_panels.setSpacing(8)
+        self.grid_panels.setColumnStretch(0, 1)
+        self.grid_panels.setColumnStretch(1, 1)
+        self.grid_panels.setColumnStretch(2, 1)
 
         self.panels: Dict[int, SingleWindowPanel] = {}
         for i in range(1, 4):
             panel = SingleWindowPanel(window_idx=i, parent=self)
             panel.auto_binh_clicked.connect(self._on_auto_binh_clicked)
             self.panels[i] = panel
-            grid.addWidget(panel, 0, i - 1)
+            self.grid_panels.addWidget(panel, 0, i - 1)
 
-        main_layout.addLayout(grid)
+        main_layout.addLayout(self.grid_panels)
 
         # Deduced Opponent & Collaborative Counter-Strategy Panel
         self.opponent_panel = OpponentDeductionPanel(parent=self)
@@ -938,10 +1124,34 @@ class MultiWindowWidget(QWidget):
         self.panels[3].set_counter_strategy_visible(num_screens == 3)
         self.panels[3].set_expanded_mode(False)
 
-        # 4. Update Opponent Panel
+        # 4. Responsive Grid Distribution
+        self.grid_panels.removeWidget(self.panels[1])
+        self.grid_panels.removeWidget(self.panels[2])
+        self.grid_panels.removeWidget(self.panels[3])
+
+        if num_screens == 1:
+            self.grid_panels.addWidget(self.panels[1], 0, 0, 1, 3)
+            self.grid_panels.setColumnStretch(0, 1)
+            self.grid_panels.setColumnStretch(1, 0)
+            self.grid_panels.setColumnStretch(2, 0)
+        elif num_screens == 2:
+            self.grid_panels.addWidget(self.panels[1], 0, 0, 1, 1)
+            self.grid_panels.addWidget(self.panels[2], 0, 1, 1, 1)
+            self.grid_panels.setColumnStretch(0, 1)
+            self.grid_panels.setColumnStretch(1, 1)
+            self.grid_panels.setColumnStretch(2, 0)
+        else:
+            self.grid_panels.addWidget(self.panels[1], 0, 0, 1, 1)
+            self.grid_panels.addWidget(self.panels[2], 0, 1, 1, 1)
+            self.grid_panels.addWidget(self.panels[3], 0, 2, 1, 1)
+            self.grid_panels.setColumnStretch(0, 1)
+            self.grid_panels.setColumnStretch(1, 1)
+            self.grid_panels.setColumnStretch(2, 1)
+
+        # 5. Update Opponent Panel
         self.opponent_panel.setVisible(num_screens == 3)
 
-        # 5. Update Action Buttons text
+        # 6. Update Action Buttons text
         if self._worker and self._worker._is_running:
             self.btn_start.setText("⏹ Dừng quét")
             self.btn_start.setStyleSheet("background-color: #FF453A;")
@@ -958,6 +1168,8 @@ class MultiWindowWidget(QWidget):
         """Toggles between real-time game rhythm auto-detection and fixed countdown timer mode."""
         self.spin_round_time.setEnabled(not checked)
         self.spin_cooldown.setEnabled(not checked)
+        if hasattr(self, "container_manual_timing"):
+            self.container_manual_timing.setVisible(not checked)
         if checked:
             self.lbl_cooldown_summary.setText("Chế độ: Tự động theo nhịp game (Real-time)")
             self.lbl_cooldown_summary.setStyleSheet("color: #32D74B; font-weight: bold; font-size: 11px; padding: 2px 8px;")
@@ -1759,6 +1971,23 @@ class MultiWindowWidget(QWidget):
 
         if on_done_callback:
             on_done_callback(True, "Binh và hậu kiểm hoàn tất")
+
+    def resizeEvent(self, event) -> None:
+        """Adapts UI component styles and labels dynamically based on available width."""
+        super().resizeEvent(event)
+        w = self.width()
+        is_compact = w < 1050
+        if hasattr(self, "btn_refresh_wins"):
+            self.btn_refresh_wins.setText("🔄 Quét cửa sổ" if is_compact else "🔄 Quét cửa sổ macOS")
+        if hasattr(self, "btn_ref_manager"):
+            self.btn_ref_manager.setText("📚 Mẫu bài" if is_compact else "📚 Thư viện mẫu")
+        if hasattr(self, "chk_auto_game_timing"):
+            self.chk_auto_game_timing.setText("⚡ Tự động nhịp game" if is_compact else "⚡ Tự động theo nhịp game")
+        if hasattr(self, "btn_back_to_selection"):
+            self.btn_back_to_selection.setText("🔙 Đổi màn" if is_compact else "🔙 Đổi số màn")
+        if hasattr(self, "lbl_cooldown_summary"):
+            if self.chk_auto_game_timing.isChecked():
+                self.lbl_cooldown_summary.setText("Nhịp game (Real-time)" if is_compact else "Chế độ: Tự động theo nhịp game (Real-time)")
 
     def closeEvent(self, event) -> None:
         """Ensures all scanning loops, cooldown timers, and gesture workers are stopped cleanly."""

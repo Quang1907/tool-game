@@ -1,7 +1,7 @@
 # CURRENT STATE — BINH 13 ANALYZER (macOS)
 
 **Cập nhật lần cuối:** 2026-11-11  
-**Trạng thái kiểm thử:** 167/167 tests PASSED (100%)  
+**Trạng thái kiểm thử:** 168/168 tests PASSED (100%)  
 **Môi trường thực thi:** Python 3.11.17 (`.venv`), macOS Sequoia 15.4.1 (ARM64 Apple Silicon)
 
 ---
@@ -102,3 +102,19 @@
      - Bộ lọc Debounce ổn định $\ge 2$ frame liên tiếp loại bỏ hoàn toàn nhiễu giật hình khi lật bài.
      - Hệ thống tự động nâng số thứ tự ván `#N`, cập nhật trạng thái `🎯 Phát hiện Ván mới #N! Đã nhận diện đủ 13 lá — Binh bài ngay!`, mở khóa nút `⚡ Tự Động Binh Bài (Ván #N)` và tự động đẩy vào hàng đợi `auto_loop_queue` để binh bài ngay lập tức khi bật chế độ Auto-Loop.
    - **Kiểm thử tự động:** Thêm mới test case `test_auto_game_rhythm_mode_triggers_without_timer_delay` trong `tests/test_auto_binh.py`. Toàn bộ **167/167 tests PASSED (100%)**.
+
+1. **Tối ưu hóa Giao diện Responsive Siêu Gọn Gàng & Đẹp Mắt trên Tab 6 (`MultiWindowWidget`):**
+   - **Thanh điều khiển thu gọn thông minh (Smart Rhythm Control Bar):**
+     - Đóng gói toàn bộ các widget thời gian đếm lùi thủ công (`spin_round_time`, `spin_cooldown`, `btn_reset_wait`) vào `container_manual_timing`.
+     - Tự động ẩn hoàn toàn khi bật chế độ `⚡ Tự động theo nhịp game` (Real-time), giải phóng hơn 320px chiều ngang. Khi tắt nhịp game tự động, các nút đếm lùi sẽ mượt mà xuất hiện trở lại.
+     - Giới hạn chiều rộng ComboBox co giãn thông minh (80px - 160px), chống tràn viền trên màn hình hẹp.
+   - **Khung nhìn cuộn thông minh (`QScrollArea`):**
+     - Đóng gói cả `selection_page` lẫn `dashboard_page` vào `QScrollArea` có `setWidgetResizable(True)`, loại bỏ viền cứng và tích hợp thanh cuộn mờ chuẩn macOS HIG, triệt tiêu 100% hiện tượng bị cắt chữ, mất nút hay bảng suy luận ở bất kỳ độ phân giải nào.
+   - **Panel bàn chơi siêu nét & phân tầng màu sắc chuẩn macOS:**
+     - Giảm `minimumWidth` từ 250px xuống 200px giúp 3 bàn chơi nằm gọn gàng cạnh nhau ngay cả ở độ phân giải 900px - 1000px.
+     - Thẻ bài thumbnail tự động co giãn (`30x44` ở chế độ đa màn; `38x54` ở chế độ 1 màn phóng to), strip bài thu gọn 62px.
+     - Phân cấp màu sắc trực quan cho 3 Chi: Chi 1 (Xanh Cyan `#64D2FF`), Chi 2 (Vàng Cam `#FF9F0A`), Chi 3 (Xanh Lục Ngọc `#30D158`), và Khung đối thủ #4 (Tím Neon `#BF5AF2`).
+   - **Tự động co giãn theo kích thước cửa sổ (`resizeEvent`):**
+     - Co giãn nhãn các nút thông minh khi chiều rộng `< 1050px` (`"🔄 Quét"`, `"📚 Mẫu bài"`, `"⚡ Nhịp game"`, `"🔙 Đổi màn"`).
+   - **Kiểm thử tự động:**
+     - Bổ sung test case `test_responsive_layout_and_adaptive_resizing` trong `tests/test_multi_window.py`. Toàn bộ test suite **168/168 tests PASSED (100%)**.

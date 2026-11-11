@@ -2,6 +2,32 @@
 
 Tất cả các thay đổi đáng chú ý của dự án được ghi chép tại đây theo định dạng [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.4.2] — 2026-11-11
+
+### Added & Enhanced
+
+- **Tối ưu hóa Giao diện Responsive Siêu Gọn Gàng & Đẹp Mắt trên Tab 6 ([multi_window_widget.py](file:///Users/levanquang/tool/app/ui/components/multi_window_widget.py)):**
+  - **Thanh điều khiển thu gọn thông minh (Collapsible Smart Rhythm Control Bar):**
+    - Đóng gói toàn bộ các widget thời gian đếm lùi thủ công (`spin_round_time`, `spin_cooldown`, `btn_reset_wait`) vào container `container_manual_timing`.
+    - Tự động ẩn hoàn toàn khi bật chế độ `⚡ Tự động theo nhịp game` (Real-time), giải phóng hơn 320px chiều ngang. Khi tắt nhịp game tự động, các ô đếm lùi sẽ mượt mà xuất hiện trở lại.
+    - Giới hạn chiều rộng ComboBox co giãn thông minh (80px - 160px), chống tràn viền trên màn hình nhỏ.
+  - **Khung nhìn cuộn thông minh (`QScrollArea`):**
+    - Đóng gói cả `selection_page` (Page 0) lẫn `dashboard_page` (Page 1) vào `QScrollArea` có `widgetResizable=True` và thanh cuộn mờ chuẩn macOS.
+    - Đảm bảo hiển thị trọn vẹn 100% nội dung trên mọi độ phân giải (từ MacBook Air 13" 1280x800, chế độ chia đôi màn hình macOS Split View cho đến màn hình Studio Display 5K).
+  - **Panel bàn chơi siêu nét & phân tầng màu sắc chuẩn macOS:**
+    - Giảm `minimumWidth` từ 250px xuống 200px giúp 3 bàn chơi nằm gọn gàng cạnh nhau ngay cả ở độ phân giải 900px - 1000px mà không ép cuộn ngang.
+    - Thẻ bài thumbnail tự động co giãn (`30x44` ở chế độ đa màn; `38x54` ở chế độ 1 màn phóng to), strip bài thu gọn 62px.
+    - Phân cấp màu sắc trực quan cho 3 Chi: Chi 1 (Xanh Cyan `#64D2FF`), Chi 2 (Vàng Cam `#FF9F0A`), Chi 3 (Xanh Lục Ngọc `#30D158`), và Khung đối thủ #4 (Tím Neon `#BF5AF2`).
+  - **Lưới co giãn động (`grid_panels`):**
+    - Chế độ 1 Màn: Panel 1 chiếm trọn 100% chiều ngang, viewer co giãn linh hoạt 180–320px.
+    - Chế độ 2 Màn: Panel 1 và 2 chia đôi 50/50 cân đối hoàn hảo.
+    - Chế độ 3 Màn: 3 Panel chia 33/33/33 với chiều rộng tối thiểu 200px, hỗ trợ cuộn mượt mà khi cửa sổ bị bóp hẹp.
+  - **Tự động co giãn thích ứng (`resizeEvent`):**
+    - Tự động rút gọn nhãn nút trên màn hình nhỏ ($< 1050px$): `"🔄 Quét"`, `"📚 Mẫu bài"`, `"⚡ Nhịp game"`, `"🔙 Đổi màn"`.
+  - **Kiểm thử tự động:** Bổ sung test case `test_responsive_layout_and_adaptive_resizing` trong [test_multi_window.py](file:///Users/levanquang/tool/tests/test_multi_window.py). Toàn bộ test suite **168/168 tests PASSED (100%)**.
+
+---
+
 ## [1.4.1] — 2026-11-11
 
 ### Added & Enhanced

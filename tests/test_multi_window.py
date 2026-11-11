@@ -325,6 +325,77 @@ class TestDirectWindowCaptureAndSelection:
 
         widget.close()
 
+    def test_responsive_layout_and_adaptive_resizing(self, qapp):
+        """Verifies responsive scroll areas, dynamic column stretches, and adaptive label resizing."""
+        from PySide6.QtCore import QSize
+        from PySide6.QtGui import QResizeEvent
+        from PySide6.QtWidgets import QScrollArea
+        from app.ui.components.multi_window_widget import MultiWindowWidget
+
+        widget = MultiWindowWidget()
+
+        # 1. Responsive Scroll Areas
+        assert isinstance(widget.selection_scroll, QScrollArea)
+        assert widget.selection_scroll.widgetResizable() is True
+        assert isinstance(widget.dashboard_scroll, QScrollArea)
+        assert widget.dashboard_scroll.widgetResizable() is True
+
+        # 2. Responsive Grid Stretches
+        # Mode 1: 100% full width to panel 1
+        widget.set_screen_mode(1)
+        assert widget.grid_panels.columnStretch(0) == 1
+        assert widget.grid_panels.columnStretch(1) == 0
+        assert widget.grid_panels.columnStretch(2) == 0
+
+        # Mode 2: 50/50 split between panel 1 & 2
+        widget.set_screen_mode(2)
+        assert widget.grid_panels.columnStretch(0) == 1
+        assert widget.grid_panels.columnStretch(1) == 1
+        assert widget.grid_panels.columnStretch(2) == 0
+
+        # Mode 3: 33/33/33 split across panels 1, 2, 3
+        widget.set_screen_mode(3)
+        assert widget.grid_panels.columnStretch(0) == 1
+        assert widget.grid_panels.columnStretch(1) == 1
+        assert widget.grid_panels.columnStretch(2) == 1
+
+        # 3. Dynamic Adaptive Resizing
+        # Verify manual timing container visibility
+        assert hasattr(widget, "container_manual_timing")
+        assert widget.container_manual_timing.isHidden() is True, "Manual timing should be collapsed by default in real-time rhythm mode"
+        widget.chk_auto_game_timing.setChecked(False)
+        assert widget.container_manual_timing.isHidden() is False, "Manual timing controls should appear when manual timing is enabled"
+        widget.chk_auto_game_timing.setChecked(True)
+        assert widget.container_manual_timing.isHidden() is True
+
+        # Resize to narrow/compact window (< 1050px)
+        widget.resize(800, 600)
+        qapp.sendEvent(widget, QResizeEvent(QSize(800, 600), QSize(1200, 800)))
+        assert widget.btn_refresh_wins.text() == "🔄 Quét cửa sổ"
+        assert widget.btn_ref_manager.text() == "📚 Mẫu bài"
+        assert widget.chk_auto_game_timing.text() == "⚡ Tự động nhịp game"
+        assert widget.btn_back_to_selection.text() == "🔙 Đổi màn"
+
+        # Resize to wide window (>= 1050px)
+        widget.resize(1280, 800)
+        qapp.sendEvent(widget, QResizeEvent(QSize(1280, 800), QSize(800, 600)))
+        assert widget.btn_refresh_wins.text() == "🔄 Quét cửa sổ macOS"
+        assert widget.btn_ref_manager.text() == "📚 Thư viện mẫu"
+        assert widget.chk_auto_game_timing.text() == "⚡ Tự động theo nhịp game"
+        assert widget.btn_back_to_selection.text() == "🔙 Đổi số màn"
+
+        # 4. SingleWindowPanel Heights
+        panel = widget.panels[1]
+        assert panel.scroll_cards.height() == 62
+        panel.set_expanded_mode(True)
+        assert panel.scroll_cards.height() == 72
+        assert panel.viewer.maximumHeight() == 320
+        panel.set_expanded_mode(False)
+        assert panel.scroll_cards.height() == 62
+        assert panel.viewer.maximumHeight() == 185
+
+        widget.close()
+
 
 
 
